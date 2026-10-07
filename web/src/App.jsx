@@ -16,6 +16,7 @@ const statusLabel = {
 function ProviderSettings({settings,onClose,onReload}) {
   const [draft,setDraft]=useState(settings);
   const [keys,setKeys]=useState({});
+  useEffect(()=>setDraft(settings),[settings]);
   const [error,setError]=useState('');
   const save=async(body)=>{
     try{
