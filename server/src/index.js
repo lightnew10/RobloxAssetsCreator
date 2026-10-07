@@ -5,10 +5,10 @@ import { clearProviderKey, getProviderSettings, updateProviderSettings } from '.
 import { providerHealth } from './providers.js';
 import { getStudioStatus, grantStudioAccess, listStudioTools, readStudioTree, revokeStudioAccess } from './studioBridge.js';
 import { closeStudioMcp } from './studioMcpClient.js';
-import { createAssetJob, queueStatus, requestCorrection, resumeJob, selectAndSave, stopJob } from './pipeline.js';
+import { createAssetJob, queueStatus, reconcileInterruptedJobs, requestCorrection, resumeJob, selectAndSave, stopJob } from './pipeline.js';
 import { getJob, listJobs } from './store.js';
 import { capturePath } from './capture.js';
-import { readTrace } from './trace.js';
+import { readTrace, readTraceArtifacts, resolveTraceArtifact } from './trace.js';
 
 const app = express();
 function publicJob(job) {
@@ -74,11 +74,19 @@ app.post('/api/jobs/:jobId/resume', async (req,res,next)=>{
   try {
     const job=await getJob(req.params.jobId);
     if(!job) return res.status(404).json({ok:false,error:{code:'JOB_NOT_FOUND',message:'Job introuvable.'}});
-    resumeJob(req.params.jobId);
-    res.status(202).json({ok:true,job:publicJob(job)});
+    const resumed=await resumeJob(req.params.jobId);
+    res.status(202).json({ok:true,job:publicJob(resumed)});
   } catch(e){next(e);}
 });
 app.get('/api/jobs/:jobId/trace', async (req,res,next)=>{ try{res.json({ok:true,events:await readTrace(req.params.jobId,Number(req.query.limit)||500)});}catch(e){next(e);} });
+app.get('/api/jobs/:jobId/trace/artifacts', async (req,res,next)=>{ try{res.json({ok:true,artifacts:await readTraceArtifacts(req.params.jobId,Number(req.query.limit)||500)});}catch(e){next(e);} });
+app.get('/api/jobs/:jobId/trace/artifacts/:artifactId', async (req,res,next)=>{
+  try {
+    const artifact=await resolveTraceArtifact(req.params.jobId,req.params.artifactId);
+    if(artifact.mimeType)res.type(artifact.mimeType);
+    res.sendFile(artifact.absolute);
+  } catch(e){next(e);}
+});
 app.get('/api/jobs/:jobId/captures/:fileName', async (req,res)=>{
   const file=capturePath(req.params.jobId,req.params.fileName);
   if(!file||!existsSync(file)) return res.status(404).json({ok:false,error:{code:'CAPTURE_NOT_FOUND',message:'Capture introuvable.'}});
@@ -92,7 +100,10 @@ app.use((err,req,res,_next)=>{
   res.status(status).json({ok:false,error:{code:err.code||'SERVER_ERROR',message:err.message||'Erreur serveur.',details:err.details||null}});
 });
 
-const server=app.listen(config.port,config.host,()=>console.log(`RobloxAssetsCreator API http://${config.host}:${config.port}`));
+const server=app.listen(config.port,config.host,()=>{
+  console.log(`RobloxAssetsCreator API http://${config.host}:${config.port}`);
+  reconcileInterruptedJobs().then((count)=>{if(count)console.log('[RAC] '+count+' job(s) marqué(s) interrompu(s) après redémarrage.');}).catch((error)=>console.error('[RAC] startup recovery',error));
+});
 function shutdown(){ closeStudioMcp(); server.close(()=>process.exit(0)); setTimeout(()=>process.exit(1),4000).unref(); }
 process.on('SIGINT',shutdown);
 process.on('SIGTERM',shutdown);
