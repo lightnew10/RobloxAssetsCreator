@@ -40,3 +40,13 @@ Exemple : le planificateur utilise un modèle distant tandis que géométrie et 
 Documentation Ollama :
 - https://docs.ollama.com/api/chat
 - https://docs.ollama.com/api/ps
+
+
+## Incident `missing_parent` du cocotier, 2026-10-07 23:53 UTC
+- `tronc`, `feuillage` et `noix` faisaient référence à `root_coconut_palm`, absent de `components`. Trois relations erronées apparaissaient six fois dans les erreurs, du fait d'une double détection.
+- Le modèle `Model` est le conteneur implicite de l'asset ; les références à un `root_*` inexistant et partagé par plusieurs composants sont désormais détachées de façon déterministe, sans créer de Part fictive.
+- Les parents manquants non reconnus comme conteneurs virtuels continuent d'être refusés ; les cycles et les relations avec un vrai parent ne sont pas masqués.
+- Le planificateur conserve les réparations dans la trace `SPATIAL_PLAN_REPAIRED`.
+- Le job rapporté utilisait encore l'ancien timeout de 240 s et trois tentatives, avec l'ancien message d'erreur ; cela suggère fortement un serveur non redémarré après le correctif, sans le prouver à distance.
+- Vérifier `http://127.0.0.1:3001/api/health` : la réponse doit exposer `server.buildTag=spatial-root-repair-v1` après mise à jour. Fermer toutes les anciennes consoles/processus et relancer `start.bat`.
+- Le frontend Vite ne changera plus silencieusement de 5173 vers 5174 si le port est occupé ; ce conflit doit être corrigé plutôt que contourné.

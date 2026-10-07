@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
 import { getProviderRuntime, getVisionRuntime } from './providerSettings.js';
 import { structuredChat, visionStructuredChat } from './providers.js';
-import { normalizeSpatialPlan, repairAiSpatialPlan, spatialPlanSchema } from './spatialPlan.js';
+import { normalizeSpatialPlan, spatialPlanSchema } from './spatialPlan.js';
 import { fallbackGeometry, geometryAudit, geometrySchema, normalizeGeometry, seedFor, variationProfiles } from './geometry.js';
 import { geometrySystem, geometryUser, plannerSystem, plannerUser, reviewSystem } from './prompts.js';
 import { auditVariant, buildNativeVariant, buildPartsVariant, saveVariantToLibrary } from './assetStudio.js';
@@ -176,9 +176,16 @@ async function buildPlan(job, referenceAnalysis) {
         schema: spatialPlanSchema,
         traceContext: { runId: job.id, phase: 'planning', attempt: attempt + 1, traceLevel: job.traceLevel },
       });
-      const prepared = repairAiSpatialPlan(response.data);
-      structuralIssues = prepared.unresolved || [];
-      const plan = normalizeSpatialPlan(prepared.input, null, [10, 10, 10]);
+      // Normalize only once: a second pass would discard the original repair
+      // audit and could turn a successfully repaired virtual root into noise.
+      const plan = normalizeSpatialPlan(response.data, null, [10, 10, 10]);
+      structuralIssues = plan.structureNormalization?.unresolved || [];
+      if (plan.structureNormalization?.repairs?.length) {
+        await traceEvent(job.id, 'SPATIAL_PLAN_REPAIRED', {
+          repairs: plan.structureNormalization.repairs,
+          componentCount: plan.components.length,
+        }, { phase: 'planning', attempt: attempt + 1, traceLevel: job.traceLevel });
+      }
       const version = (job.planVersion || 0) + 1;
       await mutateJob(job.id, (item) => {
         item.plan = plan; item.planVersion = version;
