@@ -10,7 +10,7 @@ const api = async (url, options={}) => {
 const scoreClass = (score) => score >= 8 ? 'good' : score >= 5 ? 'mid' : 'bad';
 const statusLabel = {
   queued:'En attente',understanding:'Analyse référence',planning:'Planification',generating:'Génération',
-  review_ready:'À valider',saved:'Sauvegardé',failed:'Erreur',stopped:'Arrêté'
+  review_ready:'À valider',saved:'Sauvegardé',failed:'Erreur',stopped:'Arrêté',interrupted:'Interrompu'
 };
 
 function ProviderSettings({settings,onClose,onReload}) {
@@ -149,14 +149,21 @@ function VariantCard({job,variant,onRefresh}) {
 function JobDetail({job,onRefresh}) {
   const [traceOpen,setTraceOpen]=useState(false);
   const [trace,setTrace]=useState([]);
-  const openTrace=async()=>{const d=await api('/api/jobs/'+job.id+'/trace?limit=250');setTrace(d.events||[]);setTraceOpen(true)};
+  const [artifacts,setArtifacts]=useState([]);
+  const [actionBusy,setActionBusy]=useState(false);
+  const openTrace=async()=>{
+    const [d,a]=await Promise.all([api('/api/jobs/'+job.id+'/trace?limit=250'),api('/api/jobs/'+job.id+'/trace/artifacts?limit=250')]);
+    setTrace(d.events||[]);setArtifacts(a.artifacts||[]);setTraceOpen(true)
+  };
+  const resume=async()=>{setActionBusy(true);try{await api('/api/jobs/'+job.id+'/resume',{method:'POST',body:'{}'});await onRefresh()}finally{setActionBusy(false)}};
+  const stop=async()=>{setActionBusy(true);try{await api('/api/jobs/'+job.id+'/stop',{method:'POST',body:'{}'});await onRefresh()}finally{setActionBusy(false)}};
   return <section className="panel job-detail">
-    <div className="panel-head"><div><span className="eyebrow">JOB {job.id.slice(0,8)}</span><h2>{job.name}</h2><p>{job.brief}</p></div><div className="job-state"><span className={'status '+(job.status==='failed'?'offline':job.status==='saved'||job.status==='review_ready'?'online':'working')}>{statusLabel[job.status]||job.status}</span><button onClick={openTrace}>Trace</button></div></div>
+    <div className="panel-head"><div><span className="eyebrow">JOB {job.id.slice(0,8)}</span><h2>{job.name}</h2><p>{job.brief}</p></div><div className="job-state"><span className={'status '+(['failed','interrupted'].includes(job.status)?'offline':job.status==='saved'||job.status==='review_ready'?'online':'working')}>{statusLabel[job.status]||job.status}</span><button onClick={openTrace}>Trace</button>{['failed','interrupted','stopped'].includes(job.status)&&<button className="primary" disabled={actionBusy} onClick={resume}>Reprendre</button>}{['queued','understanding','planning','generating'].includes(job.status)&&<button disabled={actionBusy} onClick={stop}>Arrêter</button>}</div></div>
     {job.error&&<div className="error"><strong>{job.error.code}</strong> · {job.error.message}</div>}
     <PlanView job={job}/>
     <div className="variants">{(job.variants||[]).map(v=><VariantCard key={v.id} job={job} variant={v} onRefresh={onRefresh}/>)}</div>
     <div className="timeline"><h3>Activité</h3>{[...(job.events||[])].reverse().slice(0,20).map(e=><div key={e.id}><time>{new Date(e.at).toLocaleTimeString()}</time><strong>{e.type}</strong><span>{e.message}</span></div>)}</div>
-    {traceOpen&&<div className="modal-backdrop"><div className="modal trace-modal"><div className="modal-head"><div><h2>FULL TRACE</h2><p>{trace.length} événements récents</p></div><button onClick={()=>setTraceOpen(false)}>✕</button></div><pre>{trace.map(e=>JSON.stringify(e,null,2)).join('\n\n')}</pre></div></div>}
+    {traceOpen&&<div className="modal-backdrop"><div className="modal trace-modal"><div className="modal-head"><div><h2>FULL TRACE</h2><p>{trace.length} événements · {artifacts.length} artifacts</p></div><button onClick={()=>setTraceOpen(false)}>✕</button></div><div className="artifact-list">{artifacts.slice().reverse().map(a=><a key={a.id} href={'/api/jobs/'+job.id+'/trace/artifacts/'+a.id} target="_blank" rel="noreferrer"><strong>{a.category}</strong><span>{a.name}</span><small>{Math.round((a.size||0)/1024)} Ko</small></a>)}</div><pre>{trace.map(e=>JSON.stringify(e,null,2)).join('\n\n')}</pre></div></div>}
   </section>;
 }
 
