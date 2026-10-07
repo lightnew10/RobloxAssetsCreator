@@ -2,7 +2,8 @@ import Ajv from 'ajv';
 import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
 import { getProviderRuntime, getVisionRuntime } from './providerSettings.js';
-import { traceProviderEvent } from './trace.js';
+import { traceProviderEvent, traceEvent } from './trace.js';
+import { parseOllamaChatStream } from './ollamaStream.js';
 
 const ajv = new Ajv({ allErrors: true, strict: false });
 
@@ -79,20 +80,69 @@ async function fetchJson(url, options, timeoutMs) {
   }
 }
 
-async function localChat({ runtime, messages, schema, images, timeoutMs }) {
+async function localChat({ runtime, messages, schema, images, traceContext = {} }) {
   const body = {
     model: runtime.textModel,
     messages: messages.map((message, index) => index === messages.length - 1 && images?.length
       ? { ...message, images: images.map(normalizeImage).filter(Boolean).map((img) => img.data) }
       : message),
-    stream: false,
+    stream: true,
     format: schema || 'json',
-    options: { temperature: 0.2, num_ctx: 16384 },
+    options: { temperature: 0.2, num_ctx: config.ollamaNumCtx },
   };
-  const payload = await fetchJson(config.ollamaUrl.replace(/\/$/, '') + '/api/chat', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  }, timeoutMs);
-  return { raw: payload, text: payload?.message?.content || '', model: payload?.model || runtime.textModel, usage: { promptTokens: payload?.prompt_eval_count, completionTokens: payload?.eval_count } };
+  const controller = new AbortController();
+  const startedAt = Date.now();
+  let reason = 'idle';
+  let lastActivity = startedAt;
+  let idleTimer;
+  const resetIdle = () => {
+    lastActivity = Date.now();
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { reason = 'idle'; controller.abort(); }, config.ollamaIdleTimeoutMs);
+  };
+  const maxTimer = setTimeout(() => { reason = 'max_duration'; controller.abort(); }, config.ollamaMaxDurationMs);
+  let lastProgress = 0;
+  resetIdle();
+  try {
+    const response = await fetch(config.ollamaUrl.replace(/\/$/, '') + '/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 1200);
+      throw error('AI_HTTP_ERROR', 'Ollama HTTP ' + response.status + ': ' + detail, { status: response.status });
+    }
+    return await parseOllamaChatStream(response, {
+      onActivity: resetIdle,
+      onProgress: async (progress) => {
+        if (!traceContext.runId || Date.now() - lastProgress < 30000) return;
+        lastProgress = Date.now();
+        await traceEvent(traceContext.runId, 'AI_PROGRESS', {
+          model: runtime.textModel,
+          seconds: Math.round((Date.now() - startedAt) / 1000),
+          contentCharacters: progress.contentCharacters,
+          thinkingCharacters: progress.thinkingCharacters,
+          chunks: progress.chunks,
+          // Never store thinking content; only counters.
+        }, traceContext);
+      },
+    });
+  } catch (cause) {
+    if (controller.signal.aborted || cause?.name === 'AbortError') {
+      throw error('AI_TIMEOUT', 'Ollama n’a pas terminé la requête (' + reason +
+        '). Modèle ' + runtime.textModel + '. Vérifie le chargement mémoire et la génération dans Ollama.', {
+        model: runtime.textModel, reason, elapsedMs: Date.now() - startedAt,
+        idleMs: Date.now() - lastActivity, idleTimeoutMs: config.ollamaIdleTimeoutMs,
+        maxDurationMs: config.ollamaMaxDurationMs,
+      });
+    }
+    throw cause;
+  } finally {
+    clearTimeout(idleTimer);
+    clearTimeout(maxTimer);
+  }
 }
 
 async function openAiCompatible({ runtime, messages, schema, images, timeoutMs, url, headers = {} }) {
@@ -141,16 +191,17 @@ async function geminiChat({ runtime, messages, images, timeoutMs }) {
   return { raw: payload, text: payload?.candidates?.[0]?.content?.parts?.map((x) => x.text || '').join('') || '', model: runtime.textModel, usage: payload?.usageMetadata || null };
 }
 
-async function callProvider({ provider, messages, schema, images = [], timeoutMs = 240000, traceContext = {}, vision = false }) {
+async function callProvider({ provider, messages, schema, images = [], timeoutMs = 240000, traceContext = {}, vision = false, modelOverride = '' }) {
   const runtime = vision ? getVisionRuntime(provider) : getProviderRuntime(provider);
   if (vision && runtime.visionModel) runtime.textModel = runtime.visionModel;
+  if (modelOverride) runtime.textModel = String(modelOverride).trim();
   if (provider !== 'local' && !runtime.apiKey) throw error('PROVIDER_KEY_REQUIRED', `Configure la clé API ${provider} dans Paramètres IA.`);
   if (!runtime.textModel) throw error('PROVIDER_MODEL_REQUIRED', `Configure le modèle ${provider}.`);
   const callId = randomUUID();
   await traceProviderEvent({ kind: 'request', callId, provider, model: runtime.textModel, messages, schema, images, traceContext });
   let response;
   try {
-    if (provider === 'local') response = await localChat({ runtime, messages, schema, images, timeoutMs });
+    if (provider === 'local') response = await localChat({ runtime, messages, schema, images, traceContext });
     else if (provider === 'openai') response = await openAiCompatible({ runtime, messages, schema, images, timeoutMs, url: 'https://api.openai.com/v1/chat/completions' });
     else if (provider === 'deepseek') response = await openAiCompatible({ runtime, messages, schema, images: [], timeoutMs, url: 'https://api.deepseek.com/chat/completions' });
     else if (provider === 'openrouter') response = await openAiCompatible({ runtime, messages, schema, images, timeoutMs, url: 'https://openrouter.ai/api/v1/chat/completions', headers: { 'HTTP-Referer': 'http://127.0.0.1', 'X-Title': 'RobloxAssetsCreator' } });

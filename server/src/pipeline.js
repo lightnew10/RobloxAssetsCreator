@@ -64,14 +64,17 @@ export async function createAssetJob(input = {}) {
     throw Object.assign(new Error('Choisis puis autorise une fenêtre Roblox Studio.'), { code: 'STUDIO_ACCESS_REQUIRED' });
   }
   const provider = input.provider || getProviderRuntime().provider;
+  const planningProvider = input.planningProvider || provider;
+  const planningModel = bounded(input.planningModel || '', 120);
   const visionProvider = input.visionProvider || getVisionRuntime().provider;
   if (provider !== 'local' && !getProviderRuntime(provider).apiKey) throw Object.assign(new Error('Clé API manquante pour ' + provider + '.'), { code: 'PROVIDER_KEY_REQUIRED' });
+  if (planningProvider !== 'local' && !getProviderRuntime(planningProvider).apiKey) throw Object.assign(new Error('Clé API manquante pour le planificateur ' + planningProvider + '.'), { code: 'PROVIDER_KEY_REQUIRED' });
   const id = randomUUID();
   const target = Math.max(1, Math.min(config.maxVariants, Number(input.variantTarget) || 3));
   const memoryLessons = await relevantLessons({ name, category: input.category || 'prop', subtype: input.subtype || '' });
   const job = {
     schemaVersion: 1, id, name, brief, category: bounded(input.category || 'prop', 80), subtype: bounded(input.subtype, 80),
-    style: bounded(input.style || 'stylized Roblox', 300), studioId, provider, visionProvider,
+    style: bounded(input.style || 'stylized Roblox', 300), studioId, provider, visionProvider, planningProvider, planningModel,
     engine: ['auto','parts','native'].includes(input.engine) ? input.engine : 'auto',
     variantTarget: target, traceLevel: input.traceLevel === 'off' ? 'off' : 'full',
     qualityPolicy: { initialVariants: target, autoAcceptScore: 8, essentialAcceptMinScore: 8, humanReviewMinScore: 5, essentialReviewMinScore: 5, maxPatchesPerCandidate: 2, maxRebuildsPerObject: 1, maxAttemptsPerObject: 9 },
@@ -81,7 +84,7 @@ export async function createAssetJob(input = {}) {
     status: 'queued', error: null, stopRequested: false, pendingCorrection: null, recovery: null, events: [],
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
-  event(job, 'job.created', 'Job de création créé.', { provider, visionProvider, engine: job.engine, variantTarget: target });
+  event(job, 'job.created', 'Job de création créé.', { provider, planningProvider, planningModel: planningModel || null, visionProvider, engine: job.engine, variantTarget: target });
   await saveJob(job);
   await traceArtifact(id, 'inputs', 'job_request', { ...job, referenceImages: job.referenceImages.map((x) => ({ dataUrlBytes: x.length })) }, { phase: 'input' });
   for (let index = 0; index < job.referenceImages.length; index += 1) {
@@ -164,7 +167,8 @@ async function buildPlan(job, referenceAnalysis) {
   for (let attempt = 0; attempt < config.maxPlanAttempts; attempt += 1) {
     try {
       const response = await structuredChat({
-        provider: providerFor(job),
+        provider: job.planningProvider || providerFor(job),
+        modelOverride: job.planningModel || '',
         messages: [
           { role: 'system', content: plannerSystem },
           { role: 'user', content: plannerUser({ brief: job.brief, category: job.category, subtype: job.subtype, style: job.style, feedback: [...(job.memoryLessons || []).map((x) => ({ source: 'validated_memory', text: x.text })), ...(job.feedback || [])], previousIssues: structuralIssues }) + '\nREFERENCE_ANALYSIS=' + JSON.stringify(referenceAnalysis) },
@@ -193,7 +197,10 @@ async function buildPlan(job, referenceAnalysis) {
       });
       lastIncident = snapshot.recovery.incidents.at(-1);
       await traceIncident(snapshot, lastIncident);
-      if (lastIncident.circuitBreaker || attempt === config.maxPlanAttempts - 1) {
+      // Repeating a stalled model with identical inputs and settings is not a recovery strategy.
+      // Stop after a genuine Ollama timeout and let the user choose another planning model
+      // or increase the configured limits; leave normal retries for schema/structure failures.
+      if (cause.code === 'AI_TIMEOUT' || lastIncident.circuitBreaker || attempt === config.maxPlanAttempts - 1) {
         await sendCriticalAlert(`RobloxAssetsCreator : plan 3D bloqué\n${job.name}\n${cause.message}`);
         throw cause;
       }
