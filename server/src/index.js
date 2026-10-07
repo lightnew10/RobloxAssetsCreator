@@ -11,6 +11,10 @@ import { capturePath } from './capture.js';
 import { readTrace } from './trace.js';
 
 const app = express();
+function publicJob(job) {
+  if (!job) return job;
+  return { ...job, referenceImages: (job.referenceImages || []).map((value, index) => ({ index, bytes: String(value || '').length })) };
+}
 app.disable('x-powered-by');
 app.use(express.json({ limit: '35mb' }));
 
@@ -54,24 +58,24 @@ app.post('/api/studio/access', async (req,res,next)=>{
 app.post('/api/studio/tree', async (req,res,next)=>{ try{res.json({ok:true,tree:await readStudioTree(req.body?.studioId)});}catch(e){next(e);} });
 app.post('/api/studio/reconnect', async (_req,res,next)=>{ try{closeStudioMcp();res.json({ok:true,studio:await getStudioStatus({refresh:true})});}catch(e){next(e);} });
 
-app.get('/api/jobs', async (req,res,next)=>{ try{res.json({ok:true,jobs:await listJobs(Number(req.query.limit)||40),queue:queueStatus()});}catch(e){next(e);} });
-app.post('/api/jobs', async (req,res,next)=>{ try{res.status(202).json({ok:true,job:await createAssetJob(req.body||{})});}catch(e){next(e);} });
+app.get('/api/jobs', async (req,res,next)=>{ try{res.json({ok:true,jobs:(await listJobs(Number(req.query.limit)||40)).map(publicJob),queue:queueStatus()});}catch(e){next(e);} });
+app.post('/api/jobs', async (req,res,next)=>{ try{res.status(202).json({ok:true,job:publicJob(await createAssetJob(req.body||{}))});}catch(e){next(e);} });
 app.get('/api/jobs/:jobId', async (req,res,next)=>{
   try {
     const job=await getJob(req.params.jobId);
     if(!job) return res.status(404).json({ok:false,error:{code:'JOB_NOT_FOUND',message:'Job introuvable.'}});
-    res.json({ok:true,job,queue:queueStatus()});
+    res.json({ok:true,job:publicJob(job),queue:queueStatus()});
   } catch(e){next(e);}
 });
-app.post('/api/jobs/:jobId/correct', async (req,res,next)=>{ try{res.status(202).json({ok:true,job:await requestCorrection(req.params.jobId,req.body||{})});}catch(e){next(e);} });
-app.post('/api/jobs/:jobId/select', async (req,res,next)=>{ try{res.json({ok:true,job:await selectAndSave(req.params.jobId,req.body?.variantId)});}catch(e){next(e);} });
-app.post('/api/jobs/:jobId/stop', async (req,res,next)=>{ try{res.json({ok:true,job:await stopJob(req.params.jobId)});}catch(e){next(e);} });
+app.post('/api/jobs/:jobId/correct', async (req,res,next)=>{ try{res.status(202).json({ok:true,job:publicJob(await requestCorrection(req.params.jobId,req.body||{}))});}catch(e){next(e);} });
+app.post('/api/jobs/:jobId/select', async (req,res,next)=>{ try{res.json({ok:true,job:publicJob(await selectAndSave(req.params.jobId,req.body?.variantId))});}catch(e){next(e);} });
+app.post('/api/jobs/:jobId/stop', async (req,res,next)=>{ try{res.json({ok:true,job:publicJob(await stopJob(req.params.jobId))});}catch(e){next(e);} });
 app.post('/api/jobs/:jobId/resume', async (req,res,next)=>{
   try {
     const job=await getJob(req.params.jobId);
     if(!job) return res.status(404).json({ok:false,error:{code:'JOB_NOT_FOUND',message:'Job introuvable.'}});
     resumeJob(req.params.jobId);
-    res.status(202).json({ok:true,job});
+    res.status(202).json({ok:true,job:publicJob(job)});
   } catch(e){next(e);}
 });
 app.get('/api/jobs/:jobId/trace', async (req,res,next)=>{ try{res.json({ok:true,events:await readTrace(req.params.jobId,Number(req.query.limit)||500)});}catch(e){next(e);} });
