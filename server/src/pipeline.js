@@ -8,7 +8,7 @@ import { geometrySystem, geometryUser, plannerSystem, plannerUser, reviewSystem 
 import { auditVariant, buildNativeVariant, buildPartsVariant, saveVariantToLibrary } from './assetStudio.js';
 import { captureThreeViews } from './capture.js';
 import { getStudioStatus, listStudioTools } from './studioBridge.js';
-import { getJob, mutateJob, saveJob } from './store.js';
+import { getJob, listJobs, mutateJob, saveJob } from './store.js';
 import { markRecovered, recordIncident, traceIncident } from './recovery.js';
 import { sendCriticalAlert } from './telegram.js';
 import { traceArtifact, traceEvent } from './trace.js';
@@ -81,6 +81,12 @@ export async function createAssetJob(input = {}) {
   event(job, 'job.created', 'Job de création créé.', { provider, visionProvider, engine: job.engine, variantTarget: target });
   await saveJob(job);
   await traceArtifact(id, 'inputs', 'job_request', { ...job, referenceImages: job.referenceImages.map((x) => ({ dataUrlBytes: x.length })) }, { phase: 'input' });
+  for (let index = 0; index < job.referenceImages.length; index += 1) {
+    const match = String(job.referenceImages[index]).match(/^data:(image\/(?:png|jpeg|webp));base64,(.+)$/);
+    if (!match) continue;
+    const ext = match[1] === 'image/jpeg' ? 'jpg' : match[1].split('/')[1];
+    await traceArtifact(id, 'references', 'reference_' + index, Buffer.from(match[2], 'base64'), { phase: 'input', mimeType: match[1], extension: ext });
+  }
   schedule(id);
   return job;
 }
@@ -411,4 +417,33 @@ export async function stopJob(jobId) {
 }
 
 export function queueStatus() { return { running, queued: [...queue], active: [...active] }; }
-export function resumeJob(jobId) { schedule(jobId); }
+export async function resumeJob(jobId) {
+  const job = await mutateJob(jobId, (item) => {
+    item.stopRequested = false;
+    item.status = 'queued';
+    item.error = null;
+    if (item.recovery) {
+      item.recovery.lastSignature = null;
+      item.recovery.consecutive = {};
+    }
+    event(item, 'job.manual_resume', 'Reprise manuelle demandée.');
+    return item;
+  });
+  schedule(jobId);
+  return job;
+}
+export async function reconcileInterruptedJobs() {
+  const jobs = await listJobs(200);
+  let count = 0;
+  for (const job of jobs) {
+    if (!['queued','understanding','planning','generating'].includes(job.status)) continue;
+    await mutateJob(job.id, (item) => {
+      item.status = 'interrupted';
+      item.error = { code: 'SERVER_RESTARTED', message: 'Le serveur a redémarré pendant cette création. Réautorise Studio puis clique sur Reprendre.' };
+      event(item, 'job.interrupted', 'Création interrompue par un redémarrage du serveur.');
+      return item;
+    });
+    count += 1;
+  }
+  return count;
+}
