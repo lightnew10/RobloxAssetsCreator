@@ -28,7 +28,7 @@ export async function learnFromSelection(job,variant) {
   const data=await read();
   data.lessons ||= [];
   const texts=[
-    ...(job.feedback||[]).map((entry)=>entry.text),
+    ...(job.feedback||[]).filter((entry)=>entry.source !== 'auto_review').map((entry)=>entry.text),
     variant?.review?.improvement ? 'Critique finale : '+variant.review.improvement : '',
     ...(variant?.review?.criteria||[]).filter((c)=>c.score>=8).map((c)=>'Critère validé : '+c.name+' — '+c.comment),
   ].map((x)=>String(x||'').trim()).filter(Boolean);
