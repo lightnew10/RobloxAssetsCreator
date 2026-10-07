@@ -10,3 +10,4 @@ data/runtime/
 data/provider-settings.json
 .vscode/
 .idea/
+package-lock.json
