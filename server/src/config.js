@@ -4,11 +4,21 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../..');
 const bool = (value, fallback = false) => value == null ? fallback : /^(1|true|yes|on)$/i.test(String(value));
+const boundedInteger = (value, fallback, min, max) => {
+  const number = Number(value);
+  return value == null || String(value).trim() === '' || !Number.isFinite(number)
+    ? fallback : Math.max(min, Math.min(max, Math.floor(number)));
+};
 
 export const config = Object.freeze({
   host: process.env.HOST || '127.0.0.1',
   port: Number(process.env.PORT) || 3001,
   ollamaUrl: process.env.OLLAMA_URL || 'http://127.0.0.1:11434',
+  // An Ollama model may stream thinking before producing the final JSON.
+  // Timers measure inactivity and total duration separately.
+  ollamaIdleTimeoutMs: boundedInteger(process.env.OLLAMA_IDLE_TIMEOUT_MS, 900000, 30000, 7200000),
+  ollamaMaxDurationMs: boundedInteger(process.env.OLLAMA_MAX_DURATION_MS, 3600000, 60000, 14400000),
+  ollamaNumCtx: boundedInteger(process.env.OLLAMA_NUM_CTX, 16384, 2048, 131072),
   traceLevel: ['off', 'basic', 'full'].includes(process.env.TRACE_LEVEL) ? process.env.TRACE_LEVEL : 'full',
   dataRoot: path.join(root, 'data'),
   jobsRoot: path.join(root, 'data', 'runtime', 'jobs'),

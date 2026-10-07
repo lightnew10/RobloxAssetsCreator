@@ -1,5 +1,7 @@
 # Tests manuels
 
+Voir aussi [Diagnostics IA locale](LOCAL_AI_DIAGNOSTICS.md) pour les requêtes Ollama longues et le fournisseur de planification dédié.
+
 ## Test 1 — Pipeline Parts recommandé
 
 C'est le premier test à faire.

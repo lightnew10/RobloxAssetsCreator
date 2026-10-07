@@ -95,7 +95,7 @@ function StudioPanel({studio,onRefresh}) {
 }
 
 function CreatePanel({settings,studio,onCreated}) {
-  const [form,setForm]=useState({name:'',brief:'',category:'tree',subtype:'',style:'stylized Roblox',provider:settings.selectedProvider,visionProvider:settings.selectedVisionProvider,engine:'auto',variantTarget:3});
+  const [form,setForm]=useState({name:'',brief:'',category:'tree',subtype:'',style:'stylized Roblox',provider:settings.selectedProvider,planningProvider:settings.selectedProvider,planningModel:'',visionProvider:settings.selectedVisionProvider,engine:'auto',variantTarget:3});
   const [images,setImages]=useState([]);
   const [error,setError]=useState('');
   useEffect(()=>setForm(f=>({...f,provider:settings.selectedProvider,visionProvider:settings.selectedVisionProvider})),[settings.selectedProvider,settings.selectedVisionProvider]);
@@ -121,6 +121,8 @@ function CreatePanel({settings,studio,onCreated}) {
         <label>Sous-type<input value={form.subtype} onChange={e=>setForm({...form,subtype:e.target.value})} placeholder="coconut_palm, cherry_blossom..." /></label>
         <label>Style<input value={form.style} onChange={e=>setForm({...form,style:e.target.value})} /></label>
         <label>IA texte<select value={form.provider} onChange={e=>setForm({...form,provider:e.target.value})}>{providers.map(id=><option key={id} value={id} disabled={!settings.providers[id]?.configured}>{id}</option>)}</select></label>
+        <label>IA planification<select value={form.planningProvider} onChange={e=>setForm({...form,planningProvider:e.target.value,planningModel:''})}>{providers.map(id=><option key={id} value={id} disabled={!settings.providers[id]?.configured}>{id}</option>)}</select></label>
+        <label>Modèle de planification (facultatif)<input value={form.planningModel} onChange={e=>setForm({...form,planningModel:e.target.value})} placeholder="Vide = modèle du provider sélectionné" /></label>
         <label>IA vision<select value={form.visionProvider} onChange={e=>setForm({...form,visionProvider:e.target.value})}>{providers.map(id=><option key={id} value={id} disabled={!settings.providers[id]?.configured}>{id}</option>)}</select></label>
         <label>Moteur 3D<select value={form.engine} onChange={e=>setForm({...form,engine:e.target.value})}><option value="auto">Auto</option><option value="parts">Parts contrôlées</option><option value="native">Roblox natif</option></select></label>
         <label>Variantes<select value={form.variantTarget} onChange={e=>setForm({...form,variantTarget:Number(e.target.value)})}>{[1,2,3,4,5,6].map(n=><option key={n}>{n}</option>)}</select></label>
