@@ -13,6 +13,7 @@ import { markRecovered, recordIncident, traceIncident } from './recovery.js';
 import { sendCriticalAlert } from './telegram.js';
 import { traceArtifact, traceEvent } from './trace.js';
 import { learnFromSelection, relevantLessons } from './learning.js';
+import { qualityBatchDecision, rankQualityVariant } from './qualityPolicy.js';
 
 const queue = [];
 let running = false;
@@ -73,6 +74,8 @@ export async function createAssetJob(input = {}) {
     style: bounded(input.style || 'stylized Roblox', 300), studioId, provider, visionProvider,
     engine: ['auto','parts','native'].includes(input.engine) ? input.engine : 'auto',
     variantTarget: target, traceLevel: input.traceLevel === 'off' ? 'off' : 'full',
+    qualityPolicy: { initialVariants: target, autoAcceptScore: 8, essentialAcceptMinScore: 8, humanReviewMinScore: 5, essentialReviewMinScore: 5, maxPatchesPerCandidate: 2, maxRebuildsPerObject: 1, maxAttemptsPerObject: 9 },
+    autoRebuilds: 0,
     referenceImages: Array.isArray(input.referenceImages) ? input.referenceImages.slice(0, 4) : [],
     referenceAnalysis: null, plan: null, planVersion: 0, variants: [], feedback: [], memoryLessons, selectedVariantId: null,
     status: 'queued', error: null, stopRequested: false, pendingCorrection: null, recovery: null, events: [],
@@ -352,6 +355,65 @@ async function runPatch(job, correction) {
   await runVariant(job.id, variant.id);
 }
 
+async function autoImprove(jobId) {
+  for (let cycle = 0; cycle < 4; cycle += 1) {
+    let job = await getJob(jobId);
+    const current = job.variants.filter((variant) => variant.planVersion === job.planVersion);
+    const decision = qualityBatchDecision(job.variants, {
+      planVersion: job.planVersion,
+      policy: job.qualityPolicy,
+      attemptsUsed: job.variants.filter((variant) => variant.review || ['done','failed'].includes(variant.status)).length,
+      rebuildsUsed: job.autoRebuilds || 0,
+      patchesUsed: current.filter((variant) => variant.correctionOf).length,
+      patchable: true,
+    });
+    const best = rankQualityVariant(current, job.qualityPolicy);
+    await mutateJob(jobId, (item) => {
+      item.qualityDecision = decision;
+      event(item, 'quality.decision', decision.accepted ? 'Qualité automatique validée.' : 'Évaluation de la prochaine amélioration.', { cycle: cycle + 1, ...decision });
+      return item;
+    });
+    if (decision.accepted || decision.finished || !best?.review) return;
+    if (decision.needsCorrection) {
+      const variant = createVariant(job, job.variants.length, {
+        correctionOf: best.id,
+        profile: { id:'auto_patch', label:'Auto-correction', instruction:'Corrige précisément les problèmes mesurés par la critique visuelle, conserve les critères déjà bons et améliore la conformité.' },
+        sourceReview: best.review,
+      });
+      await mutateJob(jobId, (item) => {
+        item.variants.push(variant);
+        event(item, 'quality.auto_patch', 'Correction automatique de la meilleure variante.', { sourceVariantId: best.id, variantId: variant.id, score: best.review.score });
+        return item;
+      });
+      await runVariant(jobId, variant.id);
+      continue;
+    }
+    if (decision.needsRebuild) {
+      const problems = (best.review.problems || []).map((problem) => problem.component + ': ' + problem.issue).join('; ');
+      await mutateJob(jobId, (item) => {
+        item.autoRebuilds = (item.autoRebuilds || 0) + 1;
+        item.feedback.push({ id:randomUUID(), at:new Date().toISOString(), source:'auto_review', mode:'rebuild', variantId:best.id, text:'Rebuild demandé par le contrôle qualité. ' + best.review.improvement + (problems ? ' Problèmes: ' + problems : '') });
+        item.plan = null;
+        item.status = 'planning';
+        event(item, 'quality.auto_rebuild', 'Reconstruction automatique du plan 3D.', { sourceVariantId: best.id, score: best.review.score });
+        return item;
+      });
+      job = await getJob(jobId);
+      await buildPlan(job, job.referenceAnalysis);
+      job = await getJob(jobId);
+      await mutateJob(jobId, (item) => {
+        for (let i = 0; i < item.variantTarget; i += 1) item.variants.push(createVariant(item, i));
+        item.status = 'generating';
+        return item;
+      });
+      job = await getJob(jobId);
+      for (const variant of job.variants.filter((variant) => variant.planVersion === job.planVersion && !variant.correctionOf && variant.status !== 'done')) await runVariant(jobId, variant.id);
+      continue;
+    }
+    return;
+  }
+}
+
 async function runJob(id) {
   let job = await getJob(id);
   if (!job || job.stopRequested || ['review_ready','saved','stopped'].includes(job.status)) return;
@@ -364,6 +426,7 @@ async function runJob(id) {
         job = await getJob(id);
       }
       await runFull(job);
+      await autoImprove(id);
     }
     job = await getJob(id);
     if (job.stopRequested) {
@@ -371,7 +434,7 @@ async function runJob(id) {
       return;
     }
     const candidates = job.variants.filter((x) => x.status === 'done');
-    const best = [...candidates].sort((a,b)=>(b.review?.score ?? -1)-(a.review?.score ?? -1))[0];
+    const best = rankQualityVariant(candidates, job.qualityPolicy) || [...candidates].sort((a,b)=>(b.review?.score ?? -1)-(a.review?.score ?? -1))[0];
     await mutateJob(id, (item) => {
       item.status='review_ready'; item.error=null;
       item.bestVariantId=best?.id || null;
