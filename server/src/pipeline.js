@@ -388,6 +388,21 @@ async function autoImprove(jobId) {
       await runVariant(jobId, variant.id);
       continue;
     }
+    if (decision.needsRegenerate) {
+      const profile = variationProfiles[(job.variants.length + 1) % variationProfiles.length];
+      const variant = createVariant(job, job.variants.length, {
+        convergenceOf: best.id,
+        profile: { ...profile, label: 'Convergence · ' + profile.label, instruction: profile.instruction + ' Tiens compte de la meilleure critique précédente et cherche une amélioration nette.' },
+        sourceReview: best.review,
+      });
+      await mutateJob(jobId, (item) => {
+        item.variants.push(variant);
+        event(item, 'quality.regenerate', 'Nouvelle stratégie de variante pour sortir de la stagnation.', { sourceVariantId: best.id, variantId: variant.id, score: best.review.score });
+        return item;
+      });
+      await runVariant(jobId, variant.id);
+      continue;
+    }
     if (decision.needsRebuild) {
       const problems = (best.review.problems || []).map((problem) => problem.component + ': ' + problem.issue).join('; ');
       await mutateJob(jobId, (item) => {
