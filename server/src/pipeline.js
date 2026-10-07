@@ -12,6 +12,7 @@ import { getJob, mutateJob, saveJob } from './store.js';
 import { markRecovered, recordIncident, traceIncident } from './recovery.js';
 import { sendCriticalAlert } from './telegram.js';
 import { traceArtifact, traceEvent } from './trace.js';
+import { learnFromSelection, relevantLessons } from './learning.js';
 
 const queue = [];
 let running = false;
@@ -66,13 +67,14 @@ export async function createAssetJob(input = {}) {
   if (provider !== 'local' && !getProviderRuntime(provider).apiKey) throw Object.assign(new Error('Clé API manquante pour ' + provider + '.'), { code: 'PROVIDER_KEY_REQUIRED' });
   const id = randomUUID();
   const target = Math.max(1, Math.min(config.maxVariants, Number(input.variantTarget) || 3));
+  const memoryLessons = await relevantLessons({ name, category: input.category || 'prop', subtype: input.subtype || '' });
   const job = {
     schemaVersion: 1, id, name, brief, category: bounded(input.category || 'prop', 80), subtype: bounded(input.subtype, 80),
     style: bounded(input.style || 'stylized Roblox', 300), studioId, provider, visionProvider,
     engine: ['auto','parts','native'].includes(input.engine) ? input.engine : 'auto',
     variantTarget: target, traceLevel: input.traceLevel === 'off' ? 'off' : 'full',
     referenceImages: Array.isArray(input.referenceImages) ? input.referenceImages.slice(0, 4) : [],
-    referenceAnalysis: null, plan: null, planVersion: 0, variants: [], feedback: [], selectedVariantId: null,
+    referenceAnalysis: null, plan: null, planVersion: 0, variants: [], feedback: [], memoryLessons, selectedVariantId: null,
     status: 'queued', error: null, stopRequested: false, pendingCorrection: null, recovery: null, events: [],
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
@@ -156,7 +158,7 @@ async function buildPlan(job, referenceAnalysis) {
         provider: providerFor(job),
         messages: [
           { role: 'system', content: plannerSystem },
-          { role: 'user', content: plannerUser({ brief: job.brief, category: job.category, subtype: job.subtype, style: job.style, feedback: job.feedback, previousIssues: structuralIssues }) + '\nREFERENCE_ANALYSIS=' + JSON.stringify(referenceAnalysis) },
+          { role: 'user', content: plannerUser({ brief: job.brief, category: job.category, subtype: job.subtype, style: job.style, feedback: [...(job.memoryLessons || []).map((x) => ({ source: 'validated_memory', text: x.text })), ...(job.feedback || [])], previousIssues: structuralIssues }) + '\nREFERENCE_ANALYSIS=' + JSON.stringify(referenceAnalysis) },
         ],
         schema: spatialPlanSchema,
         traceContext: { runId: job.id, phase: 'planning', attempt: attempt + 1, traceLevel: job.traceLevel },
@@ -198,7 +200,7 @@ async function makeGeometry(job, variant) {
         provider: providerFor(job),
         messages: [
           { role: 'system', content: geometrySystem },
-          { role: 'user', content: geometryUser({ plan: job.plan, profile: variant.profile, feedback: job.feedback, previousReview: variant.sourceReview || null }) },
+          { role: 'user', content: geometryUser({ plan: job.plan, profile: variant.profile, feedback: [...(job.memoryLessons || []).map((x) => ({ source: 'validated_memory', text: x.text })), ...(job.feedback || [])], previousReview: variant.sourceReview || null }) },
         ],
         schema: geometrySchema,
         traceContext: { runId: job.id, variantId: variant.id, phase: 'geometry', attempt: attempt + 1, traceLevel: job.traceLevel },
@@ -398,7 +400,9 @@ export async function selectAndSave(jobId, variantId) {
   const variant = job?.variants.find((x) => x.id === variantId && x.status === 'done');
   if (!job || !variant) throw Object.assign(new Error('Variante introuvable ou non terminée.'), { code:'VARIANT_NOT_READY' });
   const saved = await saveVariantToLibrary(job, variant);
-  job = await mutateJob(jobId, (item) => { item.selectedVariantId=variantId; item.savedAsset=saved; item.status='saved'; event(item,'variant.saved','Asset copié dans ServerStorage/RobloxAssetsCreator_Assets.',{variantId,path:saved?.path}); return item; });
+  const lessons = await learnFromSelection(job, variant);
+  await traceArtifact(job.id, 'learning', 'validated_lessons', lessons, { phase: 'learning', variantId });
+  job = await mutateJob(jobId, (item) => { item.selectedVariantId=variantId; item.savedAsset=saved; item.status='saved'; item.validatedLessons=lessons; event(item,'variant.saved','Asset copié dans ServerStorage/RobloxAssetsCreator_Assets.',{variantId,path:saved?.path,lessons:lessons.length}); return item; });
   return job;
 }
 
