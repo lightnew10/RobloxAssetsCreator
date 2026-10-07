@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { resolveStudioSelection } from './studioSelection.js';
 
 const providers = ['local','openai','claude','deepseek','gemini','openrouter'];
 const api = async (url, options={}) => {
@@ -54,21 +55,41 @@ function ProviderSettings({settings,onClose,onReload}) {
 
 function StudioPanel({studio,onRefresh}) {
   const [busy,setBusy]=useState(false);
-  const [selected,setSelected]=useState(studio?.access?.studioId||studio?.studios?.[0]?.id||'');
-  useEffect(()=>{if(!selected&&studio?.studios?.[0])setSelected(studio.studios[0].id)},[studio,selected]);
+  const [selected,setSelected]=useState('');
+  const [error,setError]=useState('');
+  const studios=studio?.studios||[];
+  const active=studio?.access?.studioId||'';
+  // Le listing MCP peut changer après une actualisation : ne jamais envoyer un ancien studioId.
+  const selectedId=resolveStudioSelection(studios,selected,active);
+  useEffect(()=>{
+    if(selected!==selectedId) {
+      setSelected(selectedId);
+      setError('');
+    }
+  },[selected,selectedId]);
   const authorize=async()=>{
-    if(!selected)return;
-    setBusy(true);try{await api('/api/studio/access',{method:'POST',body:JSON.stringify({enabled:true,studioId:selected})});await onRefresh();}finally{setBusy(false)}
+    if(!selectedId||busy)return;
+    setBusy(true);
+    setError('');
+    try{
+      await api('/api/studio/access',{method:'POST',body:JSON.stringify({enabled:true,studioId:selectedId})});
+      await onRefresh();
+    }catch(e){
+      setError(e.message||'Impossible d’autoriser cette fenêtre Roblox Studio.');
+      await onRefresh();
+    }finally{
+      setBusy(false);
+    }
   };
-  const active=studio?.access?.studioId;
   return <section className="panel studio-panel">
     <div className="panel-head"><div><span className="eyebrow">ROBLOX STUDIO MCP</span><h2>Connexion Studio</h2></div><span className={'status '+(studio?.status==='connected'?'online':'offline')}>{studio?.status||'...'}</span></div>
     <p className="muted">{studio?.detail}</p>
     <div className="studio-controls">
-      <select value={selected} onChange={e=>setSelected(e.target.value)}>{(studio?.studios||[]).map(s=><option key={s.id} value={s.id}>{s.name}{s.placeId?' · '+s.placeId:''}</option>)}</select>
-      <button className="primary" disabled={!selected||busy} onClick={authorize}>{active===selected?'Autorisé':'Autoriser cette fenêtre'}</button>
-      <button onClick={onRefresh}>Actualiser</button>
+      <select value={selectedId} onChange={e=>{setSelected(e.target.value);setError('')}}>{studios.map(s=><option key={s.id} value={s.id}>{s.name}{s.placeId?' · '+s.placeId:''}</option>)}</select>
+      <button className="primary" disabled={!selectedId||busy} onClick={authorize}>{active===selectedId?'Autorisé':'Autoriser cette fenêtre'}</button>
+      <button onClick={()=>{setError('');onRefresh()}}>Actualiser</button>
     </div>
+    {error&&<div className="error">{error}</div>}
     <div className="tool-strip">{(studio?.tools||[]).slice(0,10).map(t=><span key={t}>{t}</span>)}</div>
   </section>;
 }

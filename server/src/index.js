@@ -96,7 +96,7 @@ app.get('/api/jobs/:jobId/captures/:fileName', async (req,res)=>{
 app.use((req,res)=>res.status(404).json({ok:false,error:{code:'ROUTE_NOT_FOUND',message:'Route introuvable.'}}));
 app.use((err,req,res,_next)=>{
   console.error('[RAC]',err);
-  const status = ['JOB_NOT_FOUND'].includes(err.code) ? 404 : ['JOB_INPUT_INVALID','PROVIDER_KEY_REQUIRED','STUDIO_ACCESS_REQUIRED','FEEDBACK_REQUIRED','VARIANT_NOT_READY','JOB_NOT_REVIEWABLE'].includes(err.code) ? 409 : 500;
+  const status = ['JOB_NOT_FOUND'].includes(err.code) ? 404 : ['JOB_INPUT_INVALID','PROVIDER_KEY_REQUIRED','STUDIO_ACCESS_REQUIRED','STUDIO_NOT_CONNECTED','FEEDBACK_REQUIRED','VARIANT_NOT_READY','JOB_NOT_REVIEWABLE'].includes(err.code) ? 409 : 500;
   res.status(status).json({ok:false,error:{code:err.code||'SERVER_ERROR',message:err.message||'Erreur serveur.',details:err.details||null}});
 });
 

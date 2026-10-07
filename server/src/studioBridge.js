@@ -45,7 +45,15 @@ export async function getStudioStatus({ refresh = false } = {}) {
 
 export async function grantStudioAccess(studioId) {
   const status = await getStudioStatus({ refresh: true });
-  if (!status.studios.some((x) => x.id === studioId)) throw Object.assign(new Error('Instance Roblox Studio introuvable.'), { code: 'STUDIO_NOT_CONNECTED' });
+  if (!status.studios.some((x) => x.id === studioId)) {
+    const detail = status.studios.length
+      ? 'La fenêtre Roblox Studio sélectionnée n’est plus dans la liste. Actualise la liste et réessaie.'
+      : 'Aucune fenêtre Roblox Studio disponible. Vérifie la connexion MCP et actualise.';
+    throw Object.assign(new Error(detail), {
+      code: 'STUDIO_NOT_CONNECTED',
+      details: { requestedStudioId: studioId, availableStudios: status.studios.map(({ id, name }) => ({ id, name })) },
+    });
+  }
   access = { studioId, enabledAt: new Date().toISOString(), expiresAt: Date.now() + accessDurationMs };
   return currentAccess(status.studios);
 }
