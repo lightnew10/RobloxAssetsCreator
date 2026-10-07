@@ -1,0 +1,15 @@
+{
+  "name": "roblox-assets-creator",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "dev:server": "npm run dev --workspace server",
+    "dev:web": "npm run dev --workspace web",
+    "start:server": "npm run start --workspace server",
+    "build": "npm run build --workspace web",
+    "test": "npm test --workspace server",
+    "verify": "npm run test && npm run build"
+  },
+  "engines": { "node": ">=20.19.0" }
+}
