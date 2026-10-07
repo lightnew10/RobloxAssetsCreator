@@ -92,5 +92,20 @@ export async function readTrace(runId, limit = 500) {
     return text.split(/\r?\n/).filter(Boolean).slice(-limit).map((line) => JSON.parse(line));
   } catch { return []; }
 }
+export async function readTraceArtifacts(runId, limit = 500) {
+  try {
+    const text = await readFile(path.join(dir(runId), 'artifacts.jsonl'), 'utf8');
+    return text.split(/\r?\n/).filter(Boolean).slice(-limit).map((line) => JSON.parse(line));
+  } catch { return []; }
+}
+export async function resolveTraceArtifact(runId, artifactId) {
+  const artifacts = await readTraceArtifacts(runId, 5000);
+  const item = artifacts.find((entry) => entry.id === artifactId);
+  if (!item) throw Object.assign(new Error('Artifact de trace introuvable.'), { code: 'TRACE_ARTIFACT_NOT_FOUND' });
+  const root = path.resolve(dir(runId));
+  const absolute = path.resolve(root, item.path);
+  if (absolute !== root && !absolute.startsWith(root + path.sep)) throw Object.assign(new Error('Chemin de trace invalide.'), { code: 'TRACE_PATH_INVALID' });
+  return { ...item, absolute };
+}
 
 export function traceDirectory(runId) { return dir(runId); }
