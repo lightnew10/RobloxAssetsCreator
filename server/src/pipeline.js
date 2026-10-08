@@ -16,6 +16,7 @@ import { sendCriticalAlert } from './telegram.js';
 import { traceArtifact, traceEvent } from './trace.js';
 import { learnFromSelection, relevantLessons, relevantExamples } from './learning.js';
 import { recordVariantMetric } from './metrics.js';
+import { referenceSimilarity } from './referenceSimilarity.js';
 import { qualityBatchDecision, rankQualityVariant } from './qualityPolicy.js';
 
 const queue = [];
@@ -304,6 +305,13 @@ async function reviewVariant(job, variant) {
   if (!config.autoReview || !variant.captures?.length) return null;
   const captureImages = variant.captures.map((x) => ({ mimeType: x.mimeType, data: x.data }));
   const refs = publicReferenceImages(job);
+  // Experimental metric runs beside visual critique; it never changes review scores.
+  if (refs.length) {
+    const diagnostic = referenceSimilarity(refs,captureImages);
+    try {await traceEvent(job.id,'REFERENCE_SIMILARITY_EXPERIMENT',diagnostic,
+      {phase:'review',variantId:variant.id,traceLevel:job.traceLevel});}
+    catch(cause){console.warn('[RAC][REFERENCE_SIMILARITY_TRACE]',cause.message);}
+  }
   try {
     const response = await visionStructuredChat({
       provider: visionProviderFor(job),
