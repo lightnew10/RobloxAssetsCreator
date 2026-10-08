@@ -1,4 +1,5 @@
-import { mkdir, readFile, rename, writeFile, appendFile } from 'node:fs/promises';
+import { mkdir, readFile, appendFile } from 'node:fs/promises';
+import { writeAtomicJson } from './atomicJson.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
@@ -12,12 +13,8 @@ async function read() {
   try { return JSON.parse(await readFile(file,'utf8')); }
   catch(cause){if(cause.code==='ENOENT')return {version:1,lessons:[]};throw cause;}
 }
-async function write(data) {
-  await mkdir(path.dirname(file),{recursive:true});
-  const tmp=file+'.'+randomUUID()+'.tmp';
-  await writeFile(tmp,JSON.stringify(data,null,2),'utf8');
-  await rename(tmp,file);
-}
+async function write(data) { await writeAtomicJson(file,data); }
+
 export async function readValidatedExamples(source=examplesPath){
   let data;
   try {data=await readFile(source,'utf8');}
