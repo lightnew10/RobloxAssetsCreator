@@ -65,3 +65,10 @@ Les variantes conservent `engineUsed` et `generationSource` : `roblox_native` ou
 - data/runtime/metrics.jsonl : temps, note finale, corrections.
 - 8 Go de VRAM : OLLAMA_NUM_CTX=8192 par défaut, keep_alive:0 et texte/vision séquentiels.
 - npm run benchmark:planning compare deux architectures sur les mêmes briefs ; le benchmark n'active rien dans la production.
+
+## Nouveau mode générique low-poly (phase d'intégration)
+
+Les nouveaux jobs utilisent une classification à 8 catégories, un inventaire de composants, puis une décomposition JSON en primitives génériques (sweep/cone/revolve/extrude, etc.). Les profils modifient des proportions, et les Parts sont construites par un interpréteur déterministe. Les modules palmTree/broadleaf/rock/house restent comme chemin historique de compatibilité, non comme condition pour chaque nouvel objet.
+Active « Examiner la décomposition » si tu veux modifier les composants avant construction. Le score attribué par l'IA et la note humaine sont distincts ; seul un choix noté au moins 8 par l'utilisateur peut enrichir la bibliothèque locale.
+`npm run verify` inclut tests, build, 28 briefs de référence (statiques) et export du dataset. Les mesures visuelles exigent Studio.
+Voir docs/ARCHITECTURE.md, docs/PRIMITIVES.md, docs/CATEGORIES.md, docs/LIBRARY.md et docs/EVALUATION.md.
