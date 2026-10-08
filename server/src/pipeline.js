@@ -611,7 +611,7 @@ async function autoImprove(jobId) {
     const normalized = normalizeReview(best.review);
     const history = job.reviewHistory?.length ? job.reviewHistory : [normalized];
     const stopping = shouldStop(history, { acceptScore: job.qualityPolicy?.autoAcceptScore ?? 8 });
-    const archetypeId = job.plan?.archetype || null;
+    const archetypeId = best.geometryDefinition?.archetype || job.plan?.archetype || null;
     const parameterSchema = archetypeId ? archetypes[archetypeId]?.schema || null : null;
     const planned = planCorrections(normalized.defects, archetypeId, parameterSchema);
     const canChange = Boolean(best.geometryDefinition?.params && best.geometryDefinition.archetype === archetypeId && best.engineUsed !== 'native');
