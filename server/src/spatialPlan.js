@@ -47,6 +47,8 @@ const unique=(map,k)=>{const a=map.get(k)||[];return a.length===1?a[0]:null;};
 // container (known literal or a root_* ID shared by multiple components).
 function virtualRootReference(ref, siblings) {
   const id=idKey(ref);
+  // "Model" / "Model Roblox" name the implicit Roblox container, never a Part.
+  // Existing component IDs and names take precedence over these aliases.
   // A "root_trunk" or "root_leaf" is likely an actual structural component.
   // Never reinterpret such a missing parent as the implicit Roblox Model.
   const geometricNames=new Set([
@@ -55,7 +57,8 @@ function virtualRootReference(ref, siblings) {
     'base','foundation','fondation','canopy','couronne','root_branch','root_trunk',
   ]);
   if (id.startsWith('root_') && geometricNames.has(id.slice('root_'.length))) return false;
-  return ['root','asset_root','model_root','scene_root','world_root'].includes(id)
+  return ['root','asset_root','model_root','scene_root','world_root',
+    'model','roblox_model','model_roblox','asset_model','model_asset'].includes(id)
     || (id.startsWith('root_') && siblings>=2);
 }
 function dedupeIssues(issues) {

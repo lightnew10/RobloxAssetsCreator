@@ -66,3 +66,14 @@ Il arrete les processus qui ecoutent sur **3001**, **5173** et **5174** (et un p
 **Attention** : la fermeture vise tous les processus en ecoute sur ces ports, y compris une application tierce qui utiliserait l'un de ces ports. Aucun autre port n'est cible. Les PID systeme ne sont pas tues et un echec de fermeture empeche le demarrage plutot que de masquer l'erreur. Cette fonction est active a la demande de l'utilisateur et s'applique uniquement au lancement via `start.bat`.
 
 Si le systeme refuse l'arret d'un processus, fermer l'application concernee (ou redemarrer Windows) et relancer `start.bat`. Aucune elevation automatique en administrateur n'est tentee.
+
+## Incident du 2026-10-08 — racines `Model` et réflexion sans JSON
+
+- Les tentatives de planification ont échoué avant tout appel à Studio : `trunk_base.parentId` pointait vers `Model` puis `Model Roblox`, qui sont des noms de conteneur, pas des composants 3D à construire.
+- Le réparateur les reconnaît désormais en tant que racines virtuelles **uniquement lorsqu'aucun composant réel ne porte cet identifiant ou ce nom**. Il supprime alors la référence `parentId` et laisse la pièce directement sous le `Model` Roblox créé par le constructeur. Les parents réels manquants restent des erreurs.
+- Une autre tentative a émis plus de 58 000 caractères de réflexion sans produire de JSON. Un garde-fou `OLLAMA_MAX_THINKING_ONLY_MS` (360000 ms par défaut) interrompt cette situation en phase de planification.
+- Après `AI_THINKING_STALLED` ou `AI_INVALID_JSON` avec contenu vide, l'essai suivant passe `think:false` comme paramètre de premier niveau de l'API Ollama. C'est une **récupération ciblée**, pas un changement global du modèle.
+- Certaines versions d'Ollama peuvent ignorer la contrainte `format` avec `think:false` pour Qwen3.5. La validation AJV reste obligatoire ; un JSON mal formé ou non conforme est refusé. Un test réel sur Ollama est nécessaire.
+- Les événements `SPATIAL_PLAN_REPAIRED`, `AI_PROGRESS` et `PLAN_AI_STRATEGY_CHANGED` permettent de différencier une réparation logique d'un échec de sortie IA.
+
+Références : https://docs.ollama.com/capabilities/thinking ; https://github.com/ollama/ollama/issues/14645

@@ -80,13 +80,16 @@ async function fetchJson(url, options, timeoutMs) {
   }
 }
 
-async function localChat({ runtime, messages, schema, images, traceContext = {} }) {
+async function localChat({ runtime, messages, schema, images, traceContext = {}, thinkOverride = null }) {
   const body = {
     model: runtime.textModel,
     messages: messages.map((message, index) => index === messages.length - 1 && images?.length
       ? { ...message, images: images.map(normalizeImage).filter(Boolean).map((img) => img.data) }
       : message),
     stream: true,
+    // Qwen3.5 can otherwise spend an entire attempt in thinking mode.
+    // Never put think inside options: Ollama expects it at the top level.
+    ...(typeof thinkOverride === 'boolean' ? { think: thinkOverride } : {}),
     format: schema || 'json',
     options: { temperature: 0.2, num_ctx: config.ollamaNumCtx },
   };
@@ -117,6 +120,12 @@ async function localChat({ runtime, messages, schema, images, traceContext = {} 
     return await parseOllamaChatStream(response, {
       onActivity: resetIdle,
       onProgress: async (progress) => {
+        if (traceContext.phase === 'planning' && progress.contentCharacters === 0 &&
+            progress.thinkingCharacters > 0 && Date.now() - startedAt >= config.ollamaMaxThinkingOnlyMs) {
+          reason = 'thinking_without_answer';
+          controller.abort();
+          return;
+        }
         if (!traceContext.runId || Date.now() - lastProgress < 30000) return;
         lastProgress = Date.now();
         await traceEvent(traceContext.runId, 'AI_PROGRESS', {
@@ -131,6 +140,11 @@ async function localChat({ runtime, messages, schema, images, traceContext = {} 
     });
   } catch (cause) {
     if (controller.signal.aborted || cause?.name === 'AbortError') {
+      if (reason === 'thinking_without_answer') {
+        throw error('AI_THINKING_STALLED', 'Ollama raisonne sans produire de JSON exploitable. Nouvelle tentative avec réflexion désactivée.', {
+          model: runtime.textModel, elapsedMs: Date.now() - startedAt, maxThinkingOnlyMs: config.ollamaMaxThinkingOnlyMs,
+        });
+      }
       throw error('AI_TIMEOUT', 'Ollama n’a pas terminé la requête (' + reason +
         '). Modèle ' + runtime.textModel + '. Vérifie le chargement mémoire et la génération dans Ollama.', {
         model: runtime.textModel, reason, elapsedMs: Date.now() - startedAt,
@@ -191,7 +205,7 @@ async function geminiChat({ runtime, messages, images, timeoutMs }) {
   return { raw: payload, text: payload?.candidates?.[0]?.content?.parts?.map((x) => x.text || '').join('') || '', model: runtime.textModel, usage: payload?.usageMetadata || null };
 }
 
-async function callProvider({ provider, messages, schema, images = [], timeoutMs = 240000, traceContext = {}, vision = false, modelOverride = '' }) {
+async function callProvider({ provider, messages, schema, images = [], timeoutMs = 240000, traceContext = {}, vision = false, modelOverride = '', thinkOverride = null }) {
   const runtime = vision ? getVisionRuntime(provider) : getProviderRuntime(provider);
   if (vision && runtime.visionModel) runtime.textModel = runtime.visionModel;
   if (modelOverride) runtime.textModel = String(modelOverride).trim();
@@ -201,7 +215,7 @@ async function callProvider({ provider, messages, schema, images = [], timeoutMs
   await traceProviderEvent({ kind: 'request', callId, provider, model: runtime.textModel, messages, schema, images, traceContext });
   let response;
   try {
-    if (provider === 'local') response = await localChat({ runtime, messages, schema, images, traceContext });
+    if (provider === 'local') response = await localChat({ runtime, messages, schema, images, traceContext, thinkOverride });
     else if (provider === 'openai') response = await openAiCompatible({ runtime, messages, schema, images, timeoutMs, url: 'https://api.openai.com/v1/chat/completions' });
     else if (provider === 'deepseek') response = await openAiCompatible({ runtime, messages, schema, images: [], timeoutMs, url: 'https://api.deepseek.com/chat/completions' });
     else if (provider === 'openrouter') response = await openAiCompatible({ runtime, messages, schema, images, timeoutMs, url: 'https://openrouter.ai/api/v1/chat/completions', headers: { 'HTTP-Referer': 'http://127.0.0.1', 'X-Title': 'RobloxAssetsCreator' } });
