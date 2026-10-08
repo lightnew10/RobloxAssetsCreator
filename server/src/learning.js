@@ -67,7 +67,7 @@ export async function relevantExamples({name,brief,category,subtype},limit=3,{so
 export async function relevantLessons({name,category,subtype},limit=12){
   const data=await read();
   const nameKey=key(name),categoryKey=key(category),subtypeKey=key(subtype);
-  return (data.lessons||[]).filter(lesson=>lesson.validatedBy==='human_selection'&&(
+  return (data.lessons||[]).filter(lesson=>lesson.validatedBy==='human_selection'&&Number.isFinite(lesson.humanRating)&&lesson.humanRating>=8&&(
     (subtypeKey&&lesson.subtypeKey===subtypeKey)||
     (categoryKey&&lesson.categoryKey===categoryKey)||
     (nameKey&&lesson.nameKey===nameKey)
@@ -89,7 +89,7 @@ export async function learnFromSelection(job,variant){
     const lesson={
       id:randomUUID(),createdAt:new Date().toISOString(),sourceJobId:job.id,sourceVariantId:variant?.id||null,
       nameKey:key(job.name),categoryKey:key(job.category),subtypeKey:key(job.subtype),text:text.slice(0,1200),
-      validatedBy:'human_selection',score:variant.humanRating,
+      validatedBy:'human_selection',humanRating:variant.humanRating,score:variant.humanRating,
     };
     data.lessons.push(lesson);seen.add(text);added.push(lesson);
   }
