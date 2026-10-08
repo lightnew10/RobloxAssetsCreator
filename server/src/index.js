@@ -37,7 +37,7 @@ app.get('/api/health', async (_req,res) => {
     getStudioStatus().catch((e)=>({status:'disconnected',detail:e.message,studios:[],tools:[]})),
     providerHealth().catch(()=>({local:{ok:false}})),
   ]);
-  res.json({ ok:true, server:{host:config.host,port:config.port,traceLevel:config.traceLevel,buildTag:'windows-save-recovery-v5'}, studio, providers, queue:queueStatus() });
+  res.json({ ok:true, server:{host:config.host,port:config.port,traceLevel:config.traceLevel,buildTag:'generic-lowpoly-v6'}, studio, providers, queue:queueStatus() });
 });
 
 app.get('/api/learning/stats',async(_req,res,next)=>{try{res.json({ok:true,stats:await learningStats()});}catch(e){next(e);}});
