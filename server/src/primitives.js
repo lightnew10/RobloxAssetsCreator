@@ -1,4 +1,5 @@
 import { segment, part, bezier } from './archetypes/utils.js';
+import Ajv from 'ajv';
 
 export const PRIMITIVE_TYPES=Object.freeze(['box','wedge','cylinder','ball','cone','sweep','revolve','extrude','group']);
 export const PRIMITIVE_VERSION='1.0.0';
@@ -27,6 +28,7 @@ export const primitiveGeometrySchema={
     }}
   }
 };
+const validateJson=new Ajv({allErrors:true,strict:false}).compile(primitiveGeometrySchema);
 const allowedMaterials=new Set(['Plastic','SmoothPlastic','Wood','WoodPlanks','Metal','CorrodedMetal','Grass',
   'LeafyGrass','Concrete','Brick','Cobblestone','Rock','Slate','Sand','Snow','Ice','Glass','Fabric','Neon','Ground']);
 const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
@@ -56,7 +58,10 @@ function finiteParts(parts){
 }
 export function validatePrimitiveStructure(raw,plan){
   const issues=[],ids=new Set((plan?.components||[]).map(x=>x.id));
-  if(!Array.isArray(raw?.components)||!raw.components.length)return [{code:'schema_violation',message:'components absent'}];
+  if(!validateJson(raw)){
+    return [{code:'schema_violation',message:'JSON schema non conforme',
+      details:validateJson.errors?.map(e=>({path:e.instancePath,keyword:e.keyword,message:e.message}))}];
+  }
   const seen=new Set();
   for(const component of raw.components){
     if(!ids.has(component.componentId))issues.push({code:'missing_parent',componentId:component.componentId});
@@ -96,9 +101,14 @@ export function interpretPrimitives(raw,plan,{profile='balanced',maxParts=180,mi
   };
   for(const component of raw.components){
     const componentId=component.componentId;
+    let activeGroup=componentId;
     for(const [index,s] of component.primitives.entries()){
+      if(s.type==='group'){
+        activeGroup=safeName(s.groupId||s.name,componentId);
+        continue;
+      }
       const name=safeName(s.name,componentId+'_'+index),material=allowedMaterials.has(s.material)?s.material:'SmoothPlastic';
-      const color=colorOf(s.color),collide=s.canCollide!==false,groupId=safeName(s.groupId||componentId,componentId);
+      const color=colorOf(s.color),collide=s.canCollide!==false,groupId=safeName(s.groupId||activeGroup,componentId);
       const emit=(p)=>{if(p){p.groupId=groupId;p.canCollide=collide;add(p);}};
       const basePos=world(s.position||[0,.5,0]),baseSize=scaleSize(s.size||[.2,.2,.2]);
       if(['box','wedge','ball'].includes(s.type)){
