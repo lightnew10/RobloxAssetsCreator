@@ -168,23 +168,33 @@ function PlanView({job}) {
 
 function VariantCard({job,variant,onRefresh}) {
   const [feedback,setFeedback]=useState('');
+  const [rating,setRating]=useState('');
+  const [error,setError]=useState('');
   const [busy,setBusy]=useState(false);
   const correct=async(mode)=>{
     if(!feedback.trim())return;
     setBusy(true);try{await api('/api/jobs/'+job.id+'/correct',{method:'POST',body:JSON.stringify({variantId:variant.id,text:feedback,mode})});setFeedback('');await onRefresh()}finally{setBusy(false)}
   };
-  const save=async()=>{setBusy(true);try{await api('/api/jobs/'+job.id+'/select',{method:'POST',body:JSON.stringify({variantId:variant.id})});await onRefresh()}finally{setBusy(false)}};
+  const save=async()=>{setBusy(true);setError('');try{await api('/api/jobs/'+job.id+'/select',{method:'POST',body:JSON.stringify({variantId:variant.id,userRating:rating===''?null:Number(rating)})});await onRefresh()}catch(e){setError(e.message)}finally{setBusy(false)}};
   return <article className={'variant '+(job.bestVariantId===variant.id?'best':'')}>
     <div className="variant-head"><div><span className="variant-no">V{variant.order+1}</span><strong>{variant.profile?.label||'Variante'}</strong></div><div>{variant.review&&<span className={'score '+scoreClass(variant.review.score)}>{Number(variant.review.score).toFixed(1)}/10</span>}<span className="mini-status">{variant.status}</span></div></div>
     <div className="captures">{(variant.captures||[]).map((c,i)=><a key={c.fileName} href={'/api/jobs/'+job.id+'/captures/'+c.fileName} target="_blank"><img src={'/api/jobs/'+job.id+'/captures/'+c.fileName} alt={'vue '+(i+1)} /></a>)}</div>
     <div className="variant-meta"><span title={'Moteur effectif : '+(variant.engineUsed||job.engine)}>{sourceName(variant)}</span><span>{variant.technicalAudit?.partCount!=null?variant.technicalAudit.partCount+' parts':''}</span><span>{variant.technicalAudit?.passed?'audit OK':variant.technicalAudit?'audit KO':''}</span></div>
     {variant.review&&<div className="review"><p><strong>{variant.review.decision}</strong> · {variant.review.improvement}</p><div className="criteria">{(variant.review.criteria||[]).map((c,i)=><span key={i} title={c.comment}>{c.name}: {c.score}/10</span>)}</div></div>}
     {variant.status==='done'&&job.status==='review_ready'&&<div className="variant-actions">
-      <button className="primary" disabled={busy} onClick={save}>Choisir + sauvegarder</button>
+      <label>Ta note (0–10)
+        <select value={rating} onChange={e=>setRating(e.target.value)} aria-label="Note humaine">
+          <option value="">Choisir une note</option>
+          {Array.from({length:11},(_,i)=>i).map(n=><option key={n} value={n}>{n}/10</option>)}
+        </select>
+      </label>
+      <button className="primary" disabled={busy||rating===''} onClick={save}>Choisir + sauvegarder</button>
+      <small>La bibliothèque n'apprend que des assets explicitement choisis avec une note humaine ≥ 8/10.</small>
       <input value={feedback} onChange={e=>setFeedback(e.target.value)} placeholder="Correction à appliquer..." />
       <button disabled={busy||!feedback.trim()} onClick={()=>correct('patch')}>Patch</button>
       <button disabled={busy||!feedback.trim()} onClick={()=>correct('rebuild')}>Rebuild plan</button>
     </div>}
+    {error&&<div className="error">{error}</div>}
     {job.selectedVariantId===variant.id&&<div className="saved">Sauvegardé : {job.savedAsset?.path}</div>}
   </article>;
 }
