@@ -185,7 +185,7 @@ function JobDetail({job,onRefresh}) {
     {job.error&&<div className="error"><strong>{job.error.code}</strong> · {job.error.message}</div>}
     <PlanView job={job}/>
     <div className="variants">{(job.variants||[]).map(v=><VariantCard key={v.id} job={job} variant={v} onRefresh={onRefresh}/>)}</div>
-    <div className="timeline"><h3>Activité</h3>{[...(job.events||[])].reverse().slice(0,20).map(e=><div key={e.id}><time>{new Date(e.at).toLocaleTimeString()}</time><strong>{e.type}</strong><span>{e.message}</span></div>)}</div>
+    <div className="timeline"><h3>Activité</h3>{[...(job.events||[])].reverse().slice(0,40).map(e=><div key={e.id}><time>{new Date(e.at).toLocaleTimeString()}</time><strong>{e.type}</strong><span>{e.message}</span>{e.data && Object.keys(e.data).length > 0 && <details><summary>Détails techniques</summary><pre>{JSON.stringify(e.data,null,2).slice(0,12000)}</pre></details>}</div>)}</div>
     {traceOpen&&<div className="modal-backdrop"><div className="modal trace-modal"><div className="modal-head"><div><h2>FULL TRACE</h2><p>{trace.length} événements · {artifacts.length} artifacts</p></div><button onClick={()=>setTraceOpen(false)}>✕</button></div><div className="artifact-list">{artifacts.slice().reverse().map(a=><a key={a.id} href={'/api/jobs/'+job.id+'/trace/artifacts/'+a.id} target="_blank" rel="noreferrer"><strong>{a.category}</strong><span>{a.name}</span><small>{Math.round((a.size||0)/1024)} Ko</small></a>)}</div><pre>{trace.map(e=>JSON.stringify(e,null,2)).join('\n\n')}</pre></div></div>}
   </section>;
 }
