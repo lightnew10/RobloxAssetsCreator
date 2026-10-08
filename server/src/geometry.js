@@ -1,6 +1,7 @@
+import { proceduralGeometrySchema } from './archetypes/index.js';
 import { createHash } from 'node:crypto';
 
-export const geometrySchema = {
+export const legacyGeometrySchema = {
   type: 'object',
   additionalProperties: false,
   required: ['parts'],
@@ -26,11 +27,15 @@ export const geometrySchema = {
   },
 };
 
+
+// Keep the old Parts contract for backward compatibility while preferring compact parameters.
+export const geometrySchema={oneOf:[proceduralGeometrySchema,legacyGeometrySchema]};
+
 export const variationProfiles = [
-  { id: 'balanced', label: 'Équilibrée', instruction: 'Respect maximal du brief avec proportions naturelles et détails modérés.' },
-  { id: 'silhouette', label: 'Silhouette', instruction: 'Accentue la silhouette, les asymétries et les masses principales sans changer le type.' },
-  { id: 'detail', label: 'Détaillée', instruction: 'Ajoute des subdivisions et détails secondaires tout en gardant les mêmes proportions globales.' },
-  { id: 'compact', label: 'Compacte', instruction: 'Variation légèrement plus compacte et dense, sans perdre les critères essentiels.' },
+  { id: 'balanced', label: 'Équilibrée', instruction: 'Respect maximal du brief avec proportions naturelles et détails modérés.', ranges: {height:[.95,1.05],curvature:[.8,1.2],length:[.95,1.05]} },
+  { id: 'silhouette', label: 'Silhouette', instruction: 'Accentue la silhouette, les asymétries et les masses principales sans changer le type.', ranges: {height:[1.08,1.18],curvature:[1.4,1.8],length:[1.15,1.3]} },
+  { id: 'detail', label: 'Détaillée', instruction: 'Ajoute des subdivisions et détails secondaires tout en gardant les mêmes proportions globales.', ranges: {segments:[1.35,1.55],count:[1.2,1.4]} },
+  { id: 'compact', label: 'Compacte', instruction: 'Variation légèrement plus compacte et dense, sans perdre les critères essentiels.', ranges: {height:[.7,.8],radius:[.75,.9],length:[.7,.8]} },
   { id: 'expressive', label: 'Expressive', instruction: 'Variation plus marquée des courbes et orientations, toujours crédible et lisible.' },
   { id: 'clean', label: 'Épurée', instruction: 'Moins de petits détails mais des formes principales mieux séparées et très lisibles.' },
 ];
