@@ -20,7 +20,9 @@ cf,size=model:GetBoundingBox()
 return HttpService:JSONEncode({path=model:GetFullName(),centerX=cf.Position.X,centerY=cf.Position.Y,centerZ=cf.Position.Z,size={size.X,size.Y,size.Z}})`;
 
 export function buildPartsLuau(job, variant) {
-  const payload = { folder: folderName(job), model: modelName(job, variant), parts: variant.geometry.parts, jobId: job.id, variantId: variant.id };
+  const payload = { folder: folderName(job), model: modelName(job, variant), parts: variant.geometry.parts, jobId: job.id, variantId: variant.id,
+    category:job.plan?.category||job.category, schemaVersion:job.schemaVersion||1,
+    interpreterVersion:variant.geometryDefinition?.version||'legacy_parts', brief:String(job.brief||'').slice(0,600) };
   return `local HttpService=game:GetService("HttpService")
 local data=HttpService:JSONDecode(${JSON.stringify(JSON.stringify(payload))})
 local folder=workspace:FindFirstChild(data.folder)
@@ -31,6 +33,11 @@ local model=Instance.new("Model")
 model.Name=data.model
 model:SetAttribute("RACJobId",data.jobId)
 model:SetAttribute("RACVariantId",data.variantId)
+model:SetAttribute("RACCategory",data.category)
+model:SetAttribute("RACSchemaVersion",data.schemaVersion)
+model:SetAttribute("RACInterpreterVersion",data.interpreterVersion)
+model:SetAttribute("RACBrief",data.brief)
+local groups={}
 for index,spec in ipairs(data.parts) do
   local part=Instance.new(spec.shape=="wedge" and "WedgePart" or "Part")
   part.Name="Part_"..tostring(index)
@@ -44,10 +51,20 @@ for index,spec in ipairs(data.parts) do
   part.CanCollide=spec.canCollide==true
   local cf=CFrame.new(spec.position[1],spec.position[2],spec.position[3])*CFrame.Angles(math.rad(spec.rotation[1]),math.rad(spec.rotation[2]),math.rad(spec.rotation[3]))
   part.CFrame=spec.shape=="cylinder" and cf*CFrame.Angles(0,0,math.rad(90)) or cf
-  part.Parent=model
+  local key=spec.groupId
+  if key and key~='' then
+    if not groups[key] then
+      local g=Instance.new('Model') g.Name=key g.Parent=model groups[key]=g
+    end
+    part.Parent=groups[key]
+  else
+    part.Parent=model
+  end
 end
 model.Parent=folder
-${placement}`;
+${placement}
+local pivotCf,pivotSize=model:GetBoundingBox()
+model.WorldPivot=CFrame.new(pivotCf.Position.X,pivotCf.Position.Y-pivotSize.Y/2,pivotCf.Position.Z)`;
 }
 
 export async function buildPartsVariant(job, variant) {
