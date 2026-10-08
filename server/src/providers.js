@@ -290,7 +290,8 @@ export async function providerHealth() {
 /** Diagnostic best effort at startup; only warns when Ollama reports resident CPU layers. */
 export async function ollamaMemoryDiagnostic({ log = console, fetcher = fetch } = {}) {
   try {
-    const response=await fetcher(config.ollamaUrl.replace(/\\/$/,'')+'/api/ps');
+    const base = config.ollamaUrl.endsWith('/') ? config.ollamaUrl.slice(0,-1) : config.ollamaUrl;
+    const response=await fetcher(base+'/api/ps');
     if(!response.ok){log.warn('[RAC][OLLAMA_PS]', 'HTTP '+response.status);return [];}
     const data=await response.json(),models=Array.isArray(data?.models)?data.models:[];
     for(const model of models){
