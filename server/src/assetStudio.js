@@ -17,6 +17,7 @@ end
 local cf,size=model:GetBoundingBox()
 model:PivotTo(CFrame.new(x-cf.Position.X,size.Y/2-cf.Position.Y,-cf.Position.Z)*model:GetPivot())
 cf,size=model:GetBoundingBox()
+model.WorldPivot=CFrame.new(cf.Position.X,cf.Position.Y-size.Y/2,cf.Position.Z)
 return HttpService:JSONEncode({path=model:GetFullName(),centerX=cf.Position.X,centerY=cf.Position.Y,centerZ=cf.Position.Z,size={size.X,size.Y,size.Z}})`;
 
 export function buildPartsLuau(job, variant) {
@@ -62,9 +63,7 @@ for index,spec in ipairs(data.parts) do
   end
 end
 model.Parent=folder
-${placement}
-local pivotCf,pivotSize=model:GetBoundingBox()
-model.WorldPivot=CFrame.new(pivotCf.Position.X,pivotCf.Position.Y-pivotSize.Y/2,pivotCf.Position.Z)`;
+${placement}`;
 }
 
 export async function buildPartsVariant(job, variant) {
