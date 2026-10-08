@@ -5,7 +5,7 @@ const providers = ['local','openai','claude','deepseek','gemini','openrouter'];
 const generationModes = [
   { id: 'local', title: 'Sans IA Roblox', description: 'Par défaut · planification IA et construction 3D par Parts. Roblox Studio sert à placer et capturer le modèle, sans génération IA native.' },
   { id: 'roblox', title: 'IA Roblox uniquement', description: 'Géométrie générée par Roblox via MCP, sans repli vers les Parts. Le provider IA configuré peut encore participer au plan et à la critique.' },
-  { id: 'hybrid', title: 'Local + IA Roblox', description: 'Roblox natif d’abord si disponible, puis notre pipeline Parts si nécessaire. Le moteur effectif reste identifié pour chaque variante.' },
+  { id: 'hybrid', title: 'Local + IA Roblox', description: 'Parts par défaut ; Roblox natif si disponible pour les catégories organiques, puis repli Parts. Les anciens jobs gardent leur choix initial.' },
 ];
 const generationModeName = (id) => generationModes.find(mode => mode.id === id)?.title || generationModes[0].title;
 const sourceName = (variant) => (variant.generationSource || (variant.engineUsed === 'native' ? 'roblox_native' : variant.engineUsed?.startsWith('parts') ? 'local_parts' : '')) === 'roblox_native'
@@ -274,7 +274,7 @@ function JobDetail({job,onRefresh}) {
   const resume=async()=>{setActionBusy(true);try{await api('/api/jobs/'+job.id+'/resume',{method:'POST',body:'{}'});await onRefresh()}finally{setActionBusy(false)}};
   const stop=async()=>{setActionBusy(true);try{await api('/api/jobs/'+job.id+'/stop',{method:'POST',body:'{}'});await onRefresh()}finally{setActionBusy(false)}};
   return <section className="panel job-detail">
-    <div className="panel-head"><div><span className="eyebrow">JOB {job.id.slice(0,8)}</span><h2>{job.name}</h2><p>{job.brief}</p></div><div className="job-state"><span className={'status '+(['failed','interrupted'].includes(job.status)?'offline':job.status==='saved'||job.status==='review_ready'?'online':'working')}>{statusLabel[job.status]||job.status}</span><button onClick={openTrace}>Trace</button>{['failed','interrupted','stopped'].includes(job.status)&&<button className="primary" disabled={actionBusy} onClick={resume}>Reprendre</button>}{['queued','understanding','planning','generating'].includes(job.status)&&<button disabled={actionBusy} onClick={stop}>Arrêter</button>}</div></div>
+    <div className="panel-head"><div><span className="eyebrow">JOB {job.id.slice(0,8)}</span><h2>{job.name}</h2><p>{job.brief}</p></div><div className="job-state"><span className={'status '+(['failed','interrupted'].includes(job.status)?'offline':job.status==='saved'||job.status==='review_ready'?'online':'working')}>{statusLabel[job.status]||job.status}</span><button onClick={openTrace}>Trace</button>{['failed','interrupted','stopped'].includes(job.status)&&<button className="primary" disabled={actionBusy} onClick={resume}>Reprendre</button>}{['queued','understanding','planning','generating','awaiting_decomposition_review'].includes(job.status)&&<button disabled={actionBusy} onClick={stop}>Arrêter</button>}</div></div>
     {job.error&&<div className="error"><strong>{job.error.code}</strong> · {job.error.message}</div>}
     <GenerationScoreSummary job={job}/>
     <PlanView job={job}/>
