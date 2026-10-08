@@ -1,3 +1,4 @@
+import {assertAllowedBrief} from './contentPolicy.js';
 import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
 import { getGenerationMode, getProviderRuntime, getVisionRuntime } from './providerSettings.js';
@@ -180,9 +181,11 @@ async function analyzeReferences(job) {
       ],
       images, schema: referenceSchema, traceContext: { runId: job.id, phase: 'reference_understanding', traceLevel: job.traceLevel },
     });
+    assertAllowedBrief(response.data.summary||'');
     await mutateJob(job.id, (item) => { item.referenceAnalysis = response.data; event(item, 'reference.analyzed', 'Références analysées.', { model: response.meta.model }); return item; });
     return response.data;
   } catch (cause) {
+    if(cause.code==='CONTENT_RESTRICTED')throw cause;
     await mutateJob(job.id, (item) => { event(item, 'reference.analysis_failed', cause.message, { code: cause.code }); return item; });
     return null;
   }
