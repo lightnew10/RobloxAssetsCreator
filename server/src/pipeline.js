@@ -17,6 +17,7 @@ import { markRecovered, recordIncident, traceIncident } from './recovery.js';
 import { sendCriticalAlert } from './telegram.js';
 import { traceArtifact, traceEvent } from './trace.js';
 import { learnFromSelection, relevantLessons, relevantExamples } from './learning.js';
+import { saveLibrarySelection, searchLibrary } from './library.js';
 import { recordVariantMetric } from './metrics.js';
 import { referenceSimilarity } from './referenceSimilarity.js';
 import { qualityBatchDecision, rankQualityVariant } from './qualityPolicy.js';
@@ -82,7 +83,8 @@ export async function createAssetJob(input = {}) {
   const id = randomUUID();
   const target = Math.max(1, Math.min(config.maxVariants, Number(input.variantTarget) || 3));
   const memoryLessons = await relevantLessons({ name, category: input.category || 'prop', subtype: input.subtype || '' });
-  const memoryExamples = await relevantExamples({ name, brief, category: input.category || 'prop', subtype: input.subtype || '' });
+  const libraryExamples = await searchLibrary({name,brief,category:input.category||'prop',subtype:input.subtype||''});
+  const memoryExamples = [...libraryExamples, ...(await relevantExamples({ name, brief, category: input.category || 'prop', subtype: input.subtype || '' }))].slice(0,3);
   const job = {
     schemaVersion: 2, id, name, brief, category: bounded(input.category || 'prop', 80), subtype: bounded(input.subtype, 80),
     style: bounded(input.style || 'stylized Roblox', 300), studioId, provider, visionProvider, planningProvider, planningModel,
@@ -671,14 +673,23 @@ export async function requestCorrection(jobId, input = {}) {
   return job;
 }
 
-export async function selectAndSave(jobId, variantId) {
+export async function selectAndSave(jobId, variantId, userRating = null) {
   let job = await getJob(jobId);
   const variant = job?.variants.find((x) => x.id === variantId && x.status === 'done');
   if (!job || !variant) throw Object.assign(new Error('Variante introuvable ou non terminée.'), { code:'VARIANT_NOT_READY' });
+  const rating = userRating===null||userRating===undefined?null:Number(userRating);
+  if (rating!==null && (!Number.isFinite(rating)||rating<0||rating>10))
+    throw Object.assign(new Error('Note humaine invalide (0 à 10).'),{code:'HUMAN_RATING_INVALID'});
   const saved = await saveVariantToLibrary(job, variant);
-  const lessons = await learnFromSelection(job, variant);
+  const ratedVariant = {...variant,humanRating:rating};
+  const libraryExample = await saveLibrarySelection(job,ratedVariant,rating);
+  const lessons = await learnFromSelection(job, ratedVariant);
+  await traceEvent(job.id,'HUMAN_SELECTION',{
+    variantId, humanRating:rating,libraryAccepted:Boolean(libraryExample),libraryVersion:libraryExample?.version||null
+  },{phase:'learning',variantId});
   await traceArtifact(job.id, 'learning', 'validated_lessons', lessons, { phase: 'learning', variantId });
-  job = await mutateJob(jobId, (item) => { item.selectedVariantId=variantId; item.savedAsset=saved; item.status='saved'; item.validatedLessons=lessons; event(item,'variant.saved','Asset copié dans ServerStorage/RobloxAssetsCreator_Assets.',{variantId,path:saved?.path,lessons:lessons.length}); return item; });
+  job = await mutateJob(jobId, (item) => { item.selectedVariantId=variantId; item.savedAsset=saved; item.status='saved'; item.validatedLessons=lessons; item.humanRating=rating;
+    const selected=item.variants.find(x=>x.id===variantId); if(selected)selected.humanRating=rating; event(item,'variant.saved','Asset copié dans ServerStorage/RobloxAssetsCreator_Assets.',{variantId,path:saved?.path,lessons:lessons.length,libraryAccepted:Boolean(libraryExample),humanRating:rating}); return item; });
   return job;
 }
 
