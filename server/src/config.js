@@ -22,7 +22,10 @@ export const config = Object.freeze({
   ollamaMaxThinkingOnlyMs: boundedInteger(process.env.OLLAMA_MAX_THINKING_ONLY_MS, 90000, 30000, 14400000),
   // JSON planning is a deterministic output task; reasoning is opt-in, not default.
   ollamaPlanningThink: bool(process.env.OLLAMA_PLANNING_THINK, false),
-  ollamaNumCtx: boundedInteger(process.env.OLLAMA_NUM_CTX, 16384, 2048, 131072),
+  ollamaNumCtx: boundedInteger(process.env.OLLAMA_NUM_CTX, 8192, 2048, 131072),
+  ollamaPlanNumPredict: boundedInteger(process.env.OLLAMA_PLAN_NUM_PREDICT, 1500, 256, 4096),
+  ollamaGeometryNumPredict: boundedInteger(process.env.OLLAMA_GEOMETRY_NUM_PREDICT, 650, 256, 4096),
+  ollamaReviewNumPredict: boundedInteger(process.env.OLLAMA_REVIEW_NUM_PREDICT, 900, 256, 4096),
   traceLevel: ['off', 'basic', 'full'].includes(process.env.TRACE_LEVEL) ? process.env.TRACE_LEVEL : 'full',
   dataRoot: path.join(root, 'data'),
   jobsRoot: path.join(root, 'data', 'runtime', 'jobs'),
