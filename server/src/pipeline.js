@@ -5,6 +5,7 @@ import { engineForGenerationMode, engineForJob, generationModeForJob, generation
 import { structuredChat, visionStructuredChat } from './providers.js';
 import { normalizeSpatialPlan, spatialPlanSchema } from './spatialPlan.js';
 import { fallbackGeometry, geometryAudit, geometrySchema, normalizeGeometry, seedFor, variationProfiles } from './geometry.js';
+import { buildProceduralGeometry, guessArchetype } from './archetypes/index.js';
 import { geometrySystem, geometryUser, plannerSystem, plannerUser, reviewSystem } from './prompts.js';
 import { auditVariant, buildNativeVariant, buildPartsVariant, saveVariantToLibrary } from './assetStudio.js';
 import { captureThreeViews } from './capture.js';
@@ -243,30 +244,58 @@ async function buildPlan(job, referenceAnalysis) {
 
 async function makeGeometry(job, variant) {
   let lastError = null;
+  const seed = seedFor(job.id + ':' + variant.id);
   for (let attempt = 0; attempt < config.maxGeometryAttempts; attempt += 1) {
     try {
       const response = await structuredChat({
         provider: providerFor(job),
         messages: [
           { role: 'system', content: geometrySystem },
-          { role: 'user', content: geometryUser({ plan: job.plan, profile: variant.profile, feedback: [...(job.memoryLessons || []).map((x) => ({ source: 'validated_memory', text: x.text })), ...(job.feedback || [])], previousReview: variant.sourceReview || null }) },
+          { role: 'user', content: geometryUser({
+            plan: job.plan, profile: variant.profile,
+            examples: job.memoryExamples || [],
+            feedback: [...(job.memoryLessons || []).map(x => ({ source:'validated_memory',text:x.text })), ...(job.feedback || [])],
+            previousReview: variant.sourceReview || null,
+          }) },
         ],
         schema: geometrySchema,
         traceContext: { runId: job.id, variantId: variant.id, phase: 'geometry', attempt: attempt + 1, traceLevel: job.traceLevel },
       });
-      const geometry = normalizeGeometry(response.data, job.plan);
+      const procedural = response.data.archetype
+        ? buildProceduralGeometry(response.data, job.plan, variant.profile, seed)
+        : null;
+      const geometry = normalizeGeometry(procedural || response.data, job.plan);
       const audit = geometryAudit(geometry, job.plan);
-      if (!audit.passed) throw Object.assign(new Error('Géométrie IA non conforme : ' + audit.issues.map((x) => x.code).join(', ')), { code: 'GEOMETRY_AUDIT_FAILED', details: audit.issues });
-      return { geometry, audit, generation: { provider: response.meta.provider, model: response.meta.model, fallback: false } };
-    } catch (cause) {
-      lastError = cause;
-      await traceEvent(job.id, 'GEOMETRY_RETRY', { code: cause.code, message: cause.message }, { variantId: variant.id, phase: 'geometry', attempt: attempt + 1 });
+      if (!audit.passed) throw Object.assign(new Error('Géométrie IA non conforme : ' + audit.issues.map(x=>x.code).join(', ')), {code:'GEOMETRY_AUDIT_FAILED',details:audit.issues});
+      if (procedural) await traceEvent(job.id, 'PARAMETRIC_GEOMETRY_BUILT', {
+        archetype:procedural.definition.archetype, params:procedural.definition.params,
+        variation:procedural.definition.variation, bounds:procedural.bounds, partCount:geometry.parts.length,
+      }, {phase:'geometry',variantId:variant.id});
+      return {geometry,audit,definition:procedural?.definition||null,generation:{provider:response.meta.provider,model:response.meta.model,fallback:false}};
+    } catch(cause) {
+      lastError=cause;
+      await traceEvent(job.id,'GEOMETRY_RETRY',{code:cause.code||'GEOMETRY_ERROR',message:cause.message},
+        {variantId:variant.id,phase:'geometry',attempt:attempt+1});
     }
   }
-  const geometry = fallbackGeometry(job.plan, seedFor(job.id + ':' + variant.id), variant.profile);
-  const audit = geometryAudit(geometry, job.plan);
-  await traceEvent(job.id, 'GEOMETRY_DETERMINISTIC_FALLBACK', { reason: lastError?.message, audit }, { variantId: variant.id, phase: 'geometry' });
-  return { geometry, audit, generation: { provider: 'deterministic_fallback', model: null, fallback: true } };
+  // Known types still receive a meaningful parametric asset when the LLM fails.
+  const guessed=guessArchetype(job);
+  if (guessed) {
+    try {
+      const procedural=buildProceduralGeometry({archetype:guessed,params:{},variation:variant.profile.id},job.plan,variant.profile,seed);
+      const geometry=normalizeGeometry(procedural,job.plan);
+      const audit=geometryAudit(geometry,job.plan);
+      if (!audit.passed) throw Object.assign(new Error('Audit géométrique fallback invalide.'),{code:'GEOMETRY_AUDIT_FAILED',details:audit.issues});
+      await traceEvent(job.id,'GEOMETRY_PARAMETRIC_FALLBACK',{archetype:guessed,reason:lastError?.message,audit},
+        {variantId:variant.id,phase:'geometry'});
+      return {geometry,audit,definition:procedural.definition,generation:{provider:'deterministic_archetype',model:null,fallback:true}};
+    } catch(cause) {lastError=cause;}
+  }
+  const geometry=fallbackGeometry(job.plan,seed,variant.profile);
+  const audit=geometryAudit(geometry,job.plan);
+  await traceEvent(job.id,'GEOMETRY_DETERMINISTIC_FALLBACK',{reason:lastError?.message,audit},
+    {variantId:variant.id,phase:'geometry'});
+  return {geometry,audit,definition:null,generation:{provider:'deterministic_fallback',model:null,fallback:true}};
 }
 
 async function reviewVariant(job, variant) {
@@ -320,7 +349,7 @@ async function runVariant(jobId, variantId) {
 
   if (engine === 'parts') {
     const generated = await makeGeometry(job, variant);
-    await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.geometry=generated.geometry; v.geometryAudit=generated.audit; v.generation=generated.generation; v.status='building'; return item; });
+    await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.geometry=generated.geometry; v.geometryAudit=generated.audit; v.generation=generated.generation; v.geometryDefinition=generated.definition; v.status='building'; return item; });
     job = await getJob(jobId); variant = job.variants.find((x) => x.id === variantId);
     const bounds = await withRecovery(jobId, 'studio_build', variantId, () => buildPartsVariant(job, variant));
     await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.bounds=bounds; v.engineUsed='parts'; v.generationSource='local_parts'; v.status='auditing'; event(item,'variant.built','Variante construite par Parts.',{variantId}); return item; });
@@ -364,7 +393,7 @@ async function runVariant(jobId, variantId) {
       await mutateJob(jobId, (item) => { event(item,'variant.native_fallback','Génération native indisponible, repli Parts.',{variantId,reason:cause.message}); return item; });
       job = await getJob(jobId); variant = job.variants.find((x) => x.id === variantId);
       const generated = await makeGeometry(job, variant);
-      await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.geometry=generated.geometry; v.geometryAudit=generated.audit; v.generation=generated.generation; v.status='building'; return item; });
+      await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.geometry=generated.geometry; v.geometryAudit=generated.audit; v.generation=generated.generation; v.geometryDefinition=generated.definition; v.status='building'; return item; });
       job = await getJob(jobId); variant = job.variants.find((x) => x.id === variantId);
       const bounds = await withRecovery(jobId, 'studio_build', variantId, () => buildPartsVariant(job, variant));
       await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.bounds=bounds; v.engineUsed='parts_fallback'; v.generationSource='local_parts'; v.status='auditing'; return item; });
