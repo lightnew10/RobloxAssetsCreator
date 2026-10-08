@@ -270,9 +270,14 @@ export async function structuredChat(options) {
 }
 
 export async function visionStructuredChat(options) {
-  let provider = options.provider || getVisionRuntime().provider;
-  if (provider === 'deepseek') provider = 'local';
-  return callProvider({ ...options, provider, vision: true });
+  let provider=options.provider||getVisionRuntime().provider;
+  // User photos and screenshots never leave the device in this pipeline.
+  if(provider!=='local' && Array.isArray(options.images) && options.images.length)
+    throw error('LOCAL_VISION_REQUIRED','Les photos et captures ne sont pas envoyées à un provider distant. Choisis la vision locale dans Paramètres IA.');
+  if(provider==='deepseek')provider='local';
+  const modelOverride=options.modelOverride ||
+    (provider==='local' && options.traceContext?.phase==='review' ? config.criticModel : '');
+  return callProvider({...options,provider,vision:true,modelOverride});
 }
 
 export async function providerHealth() {
