@@ -115,7 +115,7 @@ function StudioPanel({studio,onRefresh}) {
 }
 
 function CreatePanel({settings,studio,onCreated}) {
-  const [form,setForm]=useState({name:'',brief:'',category:'tree',subtype:'',style:'Roblox low-poly, formes simplifiées, arêtes franches',sizeStuds:[10,12,10],maxParts:180,previewDecomposition:false,provider:settings.selectedProvider,planningProvider:settings.selectedProvider,planningModel:'',visionProvider:settings.selectedVisionProvider,variantTarget:3});
+  const [form,setForm]=useState({name:'',brief:'',category:'auto',subtype:'',style:'Roblox low-poly, formes simplifiées, arêtes franches',sizeStuds:[10,12,10],maxParts:180,previewDecomposition:false,provider:settings.selectedProvider,planningProvider:settings.selectedProvider,planningModel:'',visionProvider:settings.selectedVisionProvider,variantTarget:3});
   const [images,setImages]=useState([]);
   const [error,setError]=useState('');
   useEffect(()=>setForm(f=>({...f,provider:settings.selectedProvider,visionProvider:settings.selectedVisionProvider})),[settings.selectedProvider,settings.selectedVisionProvider]);
@@ -137,7 +137,9 @@ function CreatePanel({settings,studio,onCreated}) {
     <form onSubmit={submit}>
       <div className="form-grid">
         <label>Nom de l'asset (facultatif)<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Cocotier tropical" /></label>
-        <label>Catégorie<select value={form.category} onChange={e=>setForm({...form,category:e.target.value})}><option>tree</option><option>bush</option><option>rock</option><option>building</option><option>furniture</option><option>prop</option><option>road</option><option>bridge</option></select></label>
+        <label>Catégorie<select value={form.category} onChange={e=>setForm({...form,category:e.target.value})}><option value="auto">Auto-détection</option><option value="handheld">Objet tenu en main</option><option value="vehicle">Véhicule</option>
+        <option value="building">Bâtiment</option><option value="vegetation">Végétal</option><option value="animal">Animal</option>
+        <option value="furniture">Mobilier</option><option value="infrastructure">Infrastructure</option><option value="generic">Générique</option></select></label>
         <label>Sous-type<input value={form.subtype} onChange={e=>setForm({...form,subtype:e.target.value})} placeholder="coconut_palm, cherry_blossom..." /></label>
         <label>Style<input value={form.style} onChange={e=>setForm({...form,style:e.target.value})} /></label>
         <label>IA texte<select value={form.provider} onChange={e=>setForm({...form,provider:e.target.value})}>{providers.map(id=><option key={id} value={id} disabled={!settings.providers[id]?.configured}>{id}</option>)}</select></label>
