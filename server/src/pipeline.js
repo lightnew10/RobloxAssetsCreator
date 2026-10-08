@@ -339,6 +339,11 @@ async function runVariant(jobId, variantId) {
         }
       }
       if (!bounds) throw lastNativeError || Object.assign(new Error('Aucune méthode native utilisable.'), { code: 'NATIVE_METHOD_UNAVAILABLE' });
+      if (lastNativeError) await mutateJob(jobId, (item) => {
+        const previous = item.recovery?.incidents?.at(-1);
+        if (previous?.stage === 'native_build' && previous?.variantId === variantId) markRecovered(item, previous);
+        return item;
+      });
       await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.bounds=bounds; v.engineUsed='native'; v.status='auditing'; event(item,'variant.built','Variante générée nativement par Roblox.',{variantId,method:bounds.nativeMethod}); return item; });
     } catch (cause) {
       if (job.engine !== 'auto') throw cause;
