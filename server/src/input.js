@@ -1,3 +1,4 @@
+import {assertAllowedBrief} from './contentPolicy.js';
 // Pure input validation, no Studio dependency. Photos stay as local data URLs.
 const photo=/^data:image\/(png|jpeg|webp);base64,([a-z0-9+/=]+)$/i;
 export function normalizeAssetInput(input={}){
@@ -10,5 +11,6 @@ export function normalizeAssetInput(input={}){
   const brief=text||(images.length?'Reconstruis l’objet visible sur la photo en low-poly Roblox, sans inventer de détails non visibles.':'');
   const name=bounded(input.name||text.slice(0,72)||(images.length?'Objet depuis une photo':''),80);
   if(!brief||!name)throw Object.assign(new Error('Fournis un texte ou une photo PNG/JPEG/WebP valide (5 Mo max).'),{code:'JOB_INPUT_INVALID'});
+  assertAllowedBrief(brief);
   return {name,brief,referenceImages:images};
 }
