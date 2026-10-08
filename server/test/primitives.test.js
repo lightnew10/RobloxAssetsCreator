@@ -16,7 +16,7 @@ const specs=[
  {type:'group',groupId:'handles'}
 ];
 for(const spec of specs)test('primitive '+spec.type+' converts to valid Parts',()=>{
- const raw={components:[{componentId:'body',primitives:[{...common,...spec}]}]};
+ const raw={components:[{componentId:'body',primitives: spec.type==='group' ? [{...common,type:'box',size:[.4,.4,.4],position:[0,.5,0]}, {...common,...spec}] : [{...common,...spec}]}]};
  assert.deepEqual(validatePrimitiveStructure(raw,plan),[]);
  const first=interpretPrimitives(raw,plan),second=interpretPrimitives(raw,plan);
  assert.deepEqual(first,second);
