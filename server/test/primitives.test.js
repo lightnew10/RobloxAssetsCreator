@@ -20,7 +20,7 @@ for(const spec of specs)test('primitive '+spec.type+' converts to valid Parts',(
  assert.deepEqual(validatePrimitiveStructure(raw,plan),[]);
  const first=interpretPrimitives(raw,plan),second=interpretPrimitives(raw,plan);
  assert.deepEqual(first,second);
- if(spec.type==='group') assert.ok(first.parts.length===0 || first.parts.every(p=>p.groupId==='handles'));
+ if(spec.type==='group') assert.equal(first.parts.length,1); // structural group itself creates no physical part
  else {
    assert.ok(first.parts.length>0,spec.type);
    for(const part of first.parts){
