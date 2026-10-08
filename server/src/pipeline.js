@@ -737,8 +737,8 @@ export async function selectAndSave(jobId, variantId, userRating = null) {
   const rating = userRating===null||userRating===undefined?null:Number(userRating);
   if (rating!==null && (!Number.isFinite(rating)||rating<0||rating>10))
     throw Object.assign(new Error('Note humaine invalide (0 à 10).'),{code:'HUMAN_RATING_INVALID'});
-  const saved = await saveVariantToLibrary(job, variant);
   const ratedVariant = {...variant,humanRating:rating};
+  const saved = await saveVariantToLibrary(job, ratedVariant);
   const libraryExample = await saveLibrarySelection(job,ratedVariant,rating);
   const lessons = await learnFromSelection(job, ratedVariant);
   await traceEvent(job.id,'HUMAN_SELECTION',{
