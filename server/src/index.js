@@ -68,7 +68,7 @@ app.get('/api/jobs/:jobId', async (req,res,next)=>{
   } catch(e){next(e);}
 });
 app.post('/api/jobs/:jobId/correct', async (req,res,next)=>{ try{res.status(202).json({ok:true,job:publicJob(await requestCorrection(req.params.jobId,req.body||{}))});}catch(e){next(e);} });
-app.post('/api/jobs/:jobId/select', async (req,res,next)=>{ try{res.json({ok:true,job:publicJob(await selectAndSave(req.params.jobId,req.body?.variantId))});}catch(e){next(e);} });
+app.post('/api/jobs/:jobId/select', async (req,res,next)=>{ try{res.json({ok:true,job:publicJob(await selectAndSave(req.params.jobId,req.body?.variantId,req.body?.userRating))});}catch(e){next(e);} });
 app.post('/api/jobs/:jobId/stop', async (req,res,next)=>{ try{res.json({ok:true,job:publicJob(await stopJob(req.params.jobId))});}catch(e){next(e);} });
 app.post('/api/jobs/:jobId/resume', async (req,res,next)=>{
   try {
