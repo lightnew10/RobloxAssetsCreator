@@ -50,5 +50,5 @@ export function plannerUser({ brief, category, subtype, style, feedback, previou
   return JSON.stringify({ brief, category, subtype, style, feedback: feedback || [], previousStructuralIssues: previousIssues || [] });
 }
 export function geometryUser({ plan, profile, feedback, previousReview, examples=[] }) {
-  return JSON.stringify({ spatialPlan: plan, variationProfile: profile, validatedExamples: examples.slice(0,3).map(x=>({brief:String(x.brief||'').slice(0,240),category:x.category,archetype:x.archetype,params:x.params,decomposition:x.decomposition,score:x.score})), userFeedback: feedback || [], previousReview: previousReview || null });
+  return JSON.stringify({ spatialPlan: plan, variationProfile: profile, validatedExamples: examples.slice(0,3).map(x=>({brief:String(x.brief||'').slice(0,240),category:x.category,archetype:x.archetype,params:x.params,decomposition:x.decomposition,score:x.humanRating??x.score})), userFeedback: feedback || [], previousReview: previousReview || null });
 }
