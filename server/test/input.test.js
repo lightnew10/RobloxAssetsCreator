@@ -25,3 +25,9 @@ test('limit four image references without modifying original data URLs',()=>{
  const selected=normalizeAssetInput({name:'crayon',referenceImages:Array.from({length:6},()=>url)});
  assert.equal(selected.referenceImages.length,4);
 });
+
+test('explicitly protected brands/characters are rejected without network access',()=>{
+ assert.throws(()=>normalizeAssetInput({brief:'Une statue Mario fidèle au jeu Nintendo'}),e=>e.code==='CONTENT_RESTRICTED');
+ assert.throws(()=>normalizeAssetInput({brief:'Le logo officiel de cette marque'}),e=>e.code==='CONTENT_RESTRICTED');
+ assert.equal(normalizeAssetInput({brief:'Une mascotte originale low-poly'}).brief,'Une mascotte originale low-poly');
+});
