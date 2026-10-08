@@ -13,10 +13,15 @@ export function checkLocalPort(port, host = '127.0.0.1') {
   });
 }
 
+export function projectPorts(customPort = process.env.PORT) {
+  // 5174 was previously used when Vite silently selected a fallback port.
+  const value = Number(customPort);
+  const extraPort = Number.isInteger(value) && value >= 1 && value <= 65535 ? value : null;
+  return [...new Set([3001, 5173, 5174, ...(extraPort ? [extraPort] : [])])];
+}
+
 export async function checkDefaultPorts() {
-  // A custom server port should also be checked when supplied by the shell.
-  const apiPort = Number(process.env.PORT) || 3001;
-  return Promise.all([checkLocalPort(apiPort), checkLocalPort(5173)]);
+  return Promise.all(projectPorts().map((port) => checkLocalPort(port)));
 }
 
 // Handle Windows file paths and POSIX paths using Node's standard filename.

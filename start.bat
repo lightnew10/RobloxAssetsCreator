@@ -6,10 +6,17 @@ where node >nul 2>nul || (
   pause
   exit /b 1
 )
+echo [INFO] Fermeture des processus utilisant les ports 3001, 5173 et 5174...
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0scripts\cleanup-ports.ps1"
+if errorlevel 1 (
+  echo [ERREUR] Impossible de liberer tous les ports RobloxAssetsCreator.
+  echo Lis les messages ci-dessus pour identifier le processus concerne.
+  pause
+  exit /b 1
+)
 node scripts/check-ports.js
 if errorlevel 1 (
-  echo [ERREUR] Une ancienne instance utilise les ports de RobloxAssetsCreator.
-  echo Ferme les anciennes consoles du projet avant de relancer start.bat.
+  echo [ERREUR] Un port est toujours occupe apres le nettoyage.
   pause
   exit /b 1
 )

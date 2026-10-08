@@ -56,3 +56,13 @@ Documentation Ollama :
 - Le démarrage vérifie maintenant les ports 3001 (API) et 5173 (interface) avant d'ouvrir les consoles. Il s'arrête avec une erreur lisible si un port est déjà occupé ; il ne tue **aucun** processus.
 - L'interface affiche le champ `API ...` reçu de `/api/health`; la version `spatial-root-repair-v1` atteste que le correctif de relations est chargé, contrairement à une ancienne API.
 - Si le navigateur utilise le port 5174, fermer cette ancienne instance et rouvrir 5173. Une interface sur 5174 n'est pas le chemin de démarrage attendu.
+
+
+## Fermeture automatique des anciennes instances (Windows)
+
+`start.bat` lance maintenant `scripts/cleanup-ports.ps1` avant les serveurs.
+Il arrete les processus qui ecoutent sur **3001**, **5173** et **5174** (et un port `PORT` personnalise si defini dans l'environnement), puis verifie une deuxieme fois que les ports sont libres. Les parents Node des processus surveilles sont arretes pour eviter que `node --watch` ne relance aussitot une ancienne API.
+
+**Attention** : la fermeture vise tous les processus en ecoute sur ces ports, y compris une application tierce qui utiliserait l'un de ces ports. Aucun autre port n'est cible. Les PID systeme ne sont pas tues et un echec de fermeture empeche le demarrage plutot que de masquer l'erreur. Cette fonction est active a la demande de l'utilisateur et s'applique uniquement au lancement via `start.bat`.
+
+Si le systeme refuse l'arret d'un processus, fermer l'application concernee (ou redemarrer Windows) et relancer `start.bat`. Aucune elevation automatique en administrateur n'est tentee.
