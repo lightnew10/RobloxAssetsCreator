@@ -47,3 +47,11 @@
 .variant-actions small{grid-column:1/-1;color:var(--muted);font-size:10px}
 .variant-actions label{display:grid;gap:5px;color:var(--muted);font-size:11px}
 @media(max-width:700px){.preview-toggle{grid-column:1}}
+
+.learning-dashboard{margin-top:16px}
+.learning-dashboard .panel-head strong{font-size:12px;color:var(--accent)}
+.dashboard-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:13px}
+.dashboard-stats>div{padding:12px;border:1px solid var(--line);border-radius:8px;background:#0b1118}
+.dashboard-stats b{font-size:12px}
+.dashboard-stats p{color:var(--muted);font-size:11px;line-height:1.6;margin:6px 0 0;overflow-wrap:anywhere}
+@media(max-width:700px){.dashboard-stats{grid-template-columns:1fr}}
