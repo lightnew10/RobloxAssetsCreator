@@ -1,5 +1,5 @@
 import { executeStudioTool } from './studioBridge.js';
-import { parseStudioMcpResult } from './studioMcpClient.js';
+import { getStudioMcpDiagnostics, parseStudioMcpResult } from './studioMcpClient.js';
 import { traceEvent } from './trace.js';
 
 const clean = (value, n = 45) => String(value || 'Asset').replace(/[^\p{L}\p{N}_ -]/gu, '').slice(0, n);
@@ -133,7 +133,10 @@ export async function buildNativeVariant(job, variant, { methodOverride = null }
   const started = parseStudioMcpResult(await executeStudioTool(method, args, { runId: job.id, variantId: variant.id, phase: 'native_generation' }));
   if (!started?.jobId) throw Object.assign(new Error('Roblox n’a pas retourné de jobId pour la génération native.'), { code: 'NATIVE_JOB_INVALID', details: started });
   const finished = parseStudioMcpResult(await executeStudioTool('wait_job_finished', { studio_id: job.studioId, jobId: started.jobId, timeout: 600 }, { runId: job.id, variantId: variant.id, phase: 'native_generation' }));
-  const diagnostic = describeNativeFailure(finished, method, started.jobId);
+  const diagnostic = {
+    ...describeNativeFailure(finished, method, started.jobId),
+    ...(finished?.status !== 'Completed' ? { mcpDiagnostics: getStudioMcpDiagnostics() } : {}),
+  };
   await traceEvent(job.id, 'NATIVE_GENERATION_RESULT', diagnostic, { phase: 'native_generation', variantId: variant.id });
   if (finished?.status !== 'Completed') {
     const reason = diagnostic.reason || 'Roblox/MCP ne fournit aucune cause détaillée dans le résultat du job.';
