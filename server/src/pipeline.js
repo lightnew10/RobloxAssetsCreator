@@ -298,7 +298,11 @@ async function runVariant(jobId, variantId) {
   let engine = job.engine;
   const tools = (await listStudioTools()).map((x) => x.name);
   if (engine === 'auto') engine = tools.includes(job.plan.nativeMethod) && tools.includes('wait_job_finished') ? 'native' : 'parts';
-  if (engine === 'native' && !tools.includes(job.plan.nativeMethod)) engine = 'parts';
+  if (engine === 'native' && (!tools.includes(job.plan.nativeMethod) || !tools.includes('wait_job_finished'))) {
+    throw Object.assign(new Error('La génération native demandée nécessite ' + job.plan.nativeMethod + ' et wait_job_finished dans le serveur MCP Roblox.'), {
+      code: 'NATIVE_TOOL_UNAVAILABLE', details: { nativeMethod: job.plan.nativeMethod, availableTools: tools },
+    });
+  }
 
   if (engine === 'parts') {
     const generated = await makeGeometry(job, variant);
@@ -308,7 +312,29 @@ async function runVariant(jobId, variantId) {
     await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.bounds=bounds; v.engineUsed='parts'; v.status='auditing'; event(item,'variant.built','Variante construite par Parts.',{variantId}); return item; });
   } else {
     try {
-      const bounds = await withRecovery(jobId, 'native_build', variantId, () => buildNativeVariant(job, variant));
+      // If the preferred native generator fails, try a different supported generator once.
+      // Never run three identical expensive native jobs whose previous result was "Failed".
+      const alternatives = [job.plan.nativeMethod, job.plan.nativeMethod === 'generate_mesh' ? 'generate_procedural_model' : 'generate_mesh']
+        .filter((method, index, methods) => tools.includes(method) && methods.indexOf(method) === index);
+      let bounds = null;
+      let lastNativeError = null;
+      for (const method of alternatives) {
+        try {
+          bounds = await withRecovery(jobId, 'native_build', variantId,
+            () => buildNativeVariant(job, variant, { methodOverride: method }));
+          break;
+        } catch (cause) {
+          lastNativeError = cause;
+          await mutateJob(jobId, (item) => {
+            event(item, 'variant.native_method_failed',
+              'Méthode ' + method + ' échouée : ' + cause.message,
+              { variantId, method, code: cause.code, details: cause.details || null });
+            return item;
+          });
+          if (['STUDIO_ACCESS_REQUIRED', 'STUDIO_NOT_CONNECTED', 'MCP_NOT_CONNECTED', 'MCP_EXITED'].includes(cause.code)) break;
+        }
+      }
+      if (!bounds) throw lastNativeError || Object.assign(new Error('Aucune méthode native utilisable.'), { code: 'NATIVE_METHOD_UNAVAILABLE' });
       await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.bounds=bounds; v.engineUsed='native'; v.status='auditing'; event(item,'variant.built','Variante générée nativement par Roblox.',{variantId,method:bounds.nativeMethod}); return item; });
     } catch (cause) {
       if (job.engine !== 'auto') throw cause;
