@@ -189,6 +189,27 @@ function VariantCard({job,variant,onRefresh}) {
   </article>;
 }
 
+function GenerationScoreSummary({job}) {
+  const buckets = [
+    { id: 'local_parts', title: 'Notre pipeline (Parts)' },
+    { id: 'roblox_native', title: 'IA native Roblox' },
+  ].map(group => {
+    const variants = (job.variants||[]).filter(v => (v.generationSource ||
+      (v.engineUsed === 'native' ? 'roblox_native' : v.engineUsed?.startsWith('parts') ? 'local_parts' : null)) === group.id);
+    const scores = variants.filter(v=>v.review && Number.isFinite(Number(v.review.score)))
+      .map(v=>Number(v.review.score)).filter(score=>score>=0 && score<=10);
+    return { ...group, count: variants.length, mean: scores.length ? scores.reduce((a,b)=>a+b,0)/scores.length : null };
+  });
+  if (!buckets.some(bucket=>bucket.count)) return null;
+  return <div className="source-score-comparison">
+    <strong>Scores par moteur réellement utilisé</strong>
+    <div>{buckets.map(bucket=><span key={bucket.id}><b>{bucket.title}</b>
+      <small>{bucket.count} variante(s) · {bucket.mean == null ? 'Pas encore de note' : 'moyenne ' + bucket.mean.toFixed(1) + '/10'}</small>
+    </span>)}</div>
+    <p>Une note Roblox native n'est pas une mesure des performances géométriques de notre IA locale.</p>
+  </div>;
+}
+
 function JobDetail({job,onRefresh}) {
   const [traceOpen,setTraceOpen]=useState(false);
   const [trace,setTrace]=useState([]);
@@ -203,6 +224,7 @@ function JobDetail({job,onRefresh}) {
   return <section className="panel job-detail">
     <div className="panel-head"><div><span className="eyebrow">JOB {job.id.slice(0,8)}</span><h2>{job.name}</h2><p>{job.brief}</p></div><div className="job-state"><span className={'status '+(['failed','interrupted'].includes(job.status)?'offline':job.status==='saved'||job.status==='review_ready'?'online':'working')}>{statusLabel[job.status]||job.status}</span><button onClick={openTrace}>Trace</button>{['failed','interrupted','stopped'].includes(job.status)&&<button className="primary" disabled={actionBusy} onClick={resume}>Reprendre</button>}{['queued','understanding','planning','generating'].includes(job.status)&&<button disabled={actionBusy} onClick={stop}>Arrêter</button>}</div></div>
     {job.error&&<div className="error"><strong>{job.error.code}</strong> · {job.error.message}</div>}
+    <GenerationScoreSummary job={job}/>
     <PlanView job={job}/>
     <div className="variants">{(job.variants||[]).map(v=><VariantCard key={v.id} job={job} variant={v} onRefresh={onRefresh}/>)}</div>
     <div className="timeline"><h3>Activité</h3>{[...(job.events||[])].reverse().slice(0,40).map(e=><div key={e.id}><time>{new Date(e.at).toLocaleTimeString()}</time><strong>{e.type}</strong><span>{e.message}</span>{e.data && Object.keys(e.data).length > 0 && <details><summary>Détails techniques</summary><pre>{JSON.stringify(e.data,null,2).slice(0,12000)}</pre></details>}</div>)}</div>
