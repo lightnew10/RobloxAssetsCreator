@@ -44,15 +44,31 @@ function group(value){
 function assignComponents(parts,plan){
   const components=plan?.components||[];
   if(!components.length)return parts;
-  const map=new Map(), used=new Set();
-  for(const component of components){
-    const g=group([component.name,component.role,component.shape].join(' '));
-    const at=parts.findIndex((item,i)=>!used.has(i)&&(
-      group(item.name)===g || group(item.componentId)===g || g==='generic'));
-    const index=at<0?parts.findIndex((item,i)=>!used.has(i)):at;
-    if(index>=0){used.add(index);map.set(index,component.id);}
+  const groups=new Map();
+  for(const c of components){
+    const g=group([c.name,c.role,c.shape].join(' '));
+    if(!groups.has(g))groups.set(g,[]);
+    groups.get(g).push(c.id);
   }
-  return parts.map((item,i)=>({...item,componentId:map.get(i)||components.find(c=>group(c.name)===group(item.name))?.id||components[0].id}));
+  const counters=new Map();
+  const mapped=parts.map((item)=>{
+    const g=group(item.componentId)==='generic'?group(item.name):group(item.componentId);
+    const candidates=groups.get(g)||groups.get('generic')||components.map(c=>c.id);
+    const next=counters.get(g)||0;
+    counters.set(g,next+1);
+    return {...item,componentId:candidates[next%candidates.length]};
+  });
+  // Guarantee every plan component appears if at least one primitive exists per
+  // component, without creating a fake parent or corrupting the schema.
+  if(mapped.length>=components.length){
+    const present=new Set(mapped.map(x=>x.componentId));
+    for(const component of components){
+      if(present.has(component.id))continue;
+      const match=mapped.findIndex((item)=>group(item.componentId)===group(component.name));
+      if(match>=0){mapped[match].componentId=component.id;present.add(component.id);}
+    }
+  }
+  return mapped;
 }
 
 export function buildProceduralGeometry(definition,plan,profile,seed){
