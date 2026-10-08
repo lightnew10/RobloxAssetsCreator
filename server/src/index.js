@@ -9,6 +9,7 @@ import { approveDecomposition, createAssetJob, queueStatus, reconcileInterrupted
 import { getJob, listJobs } from './store.js';
 import { capturePath } from './capture.js';
 import { readTrace, readTraceArtifacts, resolveTraceArtifact } from './trace.js';
+import { learningStats } from './stats.js';
 
 const app = express();
 function publicJob(job) {
@@ -39,6 +40,7 @@ app.get('/api/health', async (_req,res) => {
   res.json({ ok:true, server:{host:config.host,port:config.port,traceLevel:config.traceLevel,buildTag:'windows-save-recovery-v5'}, studio, providers, queue:queueStatus() });
 });
 
+app.get('/api/learning/stats',async(_req,res,next)=>{try{res.json({ok:true,stats:await learningStats()});}catch(e){next(e);}});
 app.get('/api/provider-settings', (_req,res)=>res.json({ok:true,settings:getProviderSettings()}));
 app.put('/api/provider-settings', (req,res,next)=>{
   try { res.json({ok:true,settings:updateProviderSettings(req.body||{})}); } catch(e){ next(e); }
