@@ -54,3 +54,14 @@ La préférence est sauvegardée dans `data/provider-settings.json` et appliqué
 Les variantes conservent `engineUsed` et `generationSource` : `roblox_native` ou `local_parts`. Les moyennes de notes sont affichées séparément pour chaque moteur afin d'éviter d'attribuer les performances de Roblox à notre pipeline local.
 
 **Important :** « Sans IA Roblox » désactive la **génération géométrique native**, pas l'utilisation de Roblox Studio comme outil de construction et de capture. Le fournisseur IA texte/vision reste configurable séparément.
+
+
+## Géométrie déterministe et apprentissage structuré
+
+- server/src/archetypes/ : palmTree, broadleaf, rock et house exportent { id, schema, build(params) }.
+- Ollama propose un archétype et quelques paramètres, non les positions de chaque Part. Le builder produit le format historique. Les modes Parts libre et Roblox natif subsistent.
+- data/runtime/examples.jsonl : stockage des sélections humaines >= 8/10, avec brief, plan, archétype, paramètres, score et critique. Les leçons textuelles sont conservées.
+- npm run export:dataset : produit un dataset.jsonl au format chat pour une utilisation future ; aucun entraînement.
+- data/runtime/metrics.jsonl : temps, note finale, corrections.
+- 8 Go de VRAM : OLLAMA_NUM_CTX=8192 par défaut, keep_alive:0 et texte/vision séquentiels.
+- npm run benchmark:planning compare deux architectures sur les mêmes briefs ; le benchmark n'active rien dans la production.
