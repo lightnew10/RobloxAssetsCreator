@@ -247,6 +247,21 @@ function DecompositionApproval({job,onRefresh}){
   </section>;
 }
 
+function LearningDashboard({stats}){
+  if(!stats)return null;
+  return <section className="panel learning-dashboard">
+    <div className="panel-head"><div><span className="eyebrow">APPRENTISSAGE LOCAL</span><h2>Bibliothèque de références validées</h2></div>
+      <strong>{stats.totalValidated||0} exemple(s) humain(s)</strong></div>
+    <div className="dashboard-stats">
+      <div><b>Par catégorie</b><p>{Object.entries(stats.byCategory||{}).map(([category,count])=>category+' : '+count).join(' · ')||'Aucun exemple validé'}</p></div>
+      <div><b>Scores par moteur</b><p>{Object.entries(stats.engines||{}).map(([engine,x])=>engine+' : '+x.avgScore+'/10 ('+x.count+')').join(' · ')||'Aucune évaluation enregistrée'}</p></div>
+      <div><b>Jeu d'évaluation</b><p>{stats.evaluation?.fixtures?
+        stats.evaluation.passed+'/'+stats.evaluation.fixtures+' tests statiques · visuel '+(stats.evaluation.averageVisualScore==null?'non mesuré':stats.evaluation.averageVisualScore+'/10')
+        :'Pas encore exécuté'}</p></div>
+    </div>
+  </section>;
+}
+
 function JobDetail({job,onRefresh}) {
   const [traceOpen,setTraceOpen]=useState(false);
   const [trace,setTrace]=useState([]);
@@ -271,13 +286,13 @@ function JobDetail({job,onRefresh}) {
 }
 
 export default function App(){
-  const [health,setHealth]=useState(null),[settings,setSettings]=useState(null),[jobs,setJobs]=useState([]),[selectedId,setSelectedId]=useState(null),[settingsOpen,setSettingsOpen]=useState(false),[fatal,setFatal]=useState('');
+  const [health,setHealth]=useState(null),[stats,setStats]=useState(null),[settings,setSettings]=useState(null),[jobs,setJobs]=useState([]),[selectedId,setSelectedId]=useState(null),[settingsOpen,setSettingsOpen]=useState(false),[fatal,setFatal]=useState('');
   const selected=useMemo(()=>jobs.find(j=>j.id===selectedId)||jobs[0]||null,[jobs,selectedId]);
   const refreshSettings=async()=>{const d=await api('/api/provider-settings');setSettings(d.settings)};
   const refresh=async()=>{
     try{
-      const [h,j]=await Promise.all([api('/api/health'),api('/api/jobs')]);
-      setHealth(h);setJobs(j.jobs||[]);setFatal('');
+      const [h,j,t]=await Promise.all([api('/api/health'),api('/api/jobs'),api('/api/learning/stats').catch(()=>({stats:null}))]);
+      setHealth(h);setJobs(j.jobs||[]);setStats(t.stats||null);setFatal('');
       if(!selectedId&&j.jobs?.[0])setSelectedId(j.jobs[0].id);
     }catch(e){setFatal(e.message)}
   };
@@ -291,6 +306,7 @@ export default function App(){
         <StudioPanel studio={health?.studio} onRefresh={refresh}/>
         <CreatePanel settings={settings} studio={health?.studio} onCreated={job=>{setSelectedId(job.id);refresh()}}/>
       </div>
+      <LearningDashboard stats={stats}/>
       <section className="jobs-strip"><div className="jobs-title"><h3>Créations</h3><span>{jobs.length} job(s)</span></div><div className="job-tabs">{jobs.map(j=><button key={j.id} className={selected?.id===j.id?'active':''} onClick={()=>setSelectedId(j.id)}><strong>{j.name}</strong><span>{statusLabel[j.status]||j.status}</span></button>)}</div></section>
       {selected?<JobDetail job={selected} onRefresh={refresh}/>:<section className="empty"><h2>Aucun asset</h2><p>Connecte Studio, décris un asset et lance la première génération.</p></section>}
     </main>
