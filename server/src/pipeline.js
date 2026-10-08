@@ -328,7 +328,11 @@ async function runVariant(jobId, variantId) {
           await mutateJob(jobId, (item) => {
             event(item, 'variant.native_method_failed',
               'Méthode ' + method + ' échouée : ' + cause.message,
-              { variantId, method, code: cause.code, details: cause.details || null });
+              { variantId, method, code: cause.code, details: {
+                status: cause.details?.status || null,
+                reason: cause.details?.reason || null,
+                mcpDiagnostics: cause.details?.mcpDiagnostics || null,
+              } });
             return item;
           });
           if (['STUDIO_ACCESS_REQUIRED', 'STUDIO_NOT_CONNECTED', 'MCP_NOT_CONNECTED', 'MCP_EXITED'].includes(cause.code)) break;
