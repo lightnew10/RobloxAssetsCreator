@@ -117,7 +117,10 @@ async function drain() {
 
 async function withRecovery(jobId, stage, variantId, fn) {
   let previousIncident = null;
-  for (let pass = 0; pass < 3; pass += 1) {
+  // Native generation jobs are expensive; repeating the same failed job does not fix an opaque "Failed".
+  // Try a different native method in runVariant instead of three identical MCP calls.
+  const maxPasses = stage === 'native_build' ? 1 : 3;
+  for (let pass = 0; pass < maxPasses; pass += 1) {
     try {
       const result = await fn(pass);
       if (previousIncident) await mutateJob(jobId, (job) => { markRecovered(job, previousIncident); return job; });
@@ -162,19 +165,19 @@ async function analyzeReferences(job) {
 
 async function buildPlan(job, referenceAnalysis) {
   let structuralIssues = [];
-  let noThinkingFallback = false;
   let lastIncident = null;
+  let lastPlannerError = null;
   await mutateJob(job.id, (item) => { item.status = 'planning'; event(item, 'plan.started', 'Création du plan 3D.'); return item; });
   for (let attempt = 0; attempt < config.maxPlanAttempts; attempt += 1) {
     try {
       const response = await structuredChat({
         provider: job.planningProvider || providerFor(job),
         modelOverride: job.planningModel || '',
-        // Only disable thinking after a diagnosed empty response or stalled thinking.
-        thinkOverride: noThinkingFallback ? false : null,
+        // JSON planning is deterministic: do not burn long reasoning before answering.
+        thinkOverride: (job.planningProvider || providerFor(job)) === 'local' ? config.ollamaPlanningThink : null,
         messages: [
           { role: 'system', content: plannerSystem },
-          { role: 'user', content: plannerUser({ brief: job.brief, category: job.category, subtype: job.subtype, style: job.style, feedback: [...(job.memoryLessons || []).map((x) => ({ source: 'validated_memory', text: x.text })), ...(job.feedback || [])], previousIssues: structuralIssues }) + '\nREFERENCE_ANALYSIS=' + JSON.stringify(referenceAnalysis) },
+          { role: 'user', content: plannerUser({ brief: job.brief, category: job.category, subtype: job.subtype, style: job.style, feedback: [...(job.memoryLessons || []).map((x) => ({ source: 'validated_memory', text: x.text })), ...(job.feedback || [])], previousIssues: structuralIssues }) + '\nREFERENCE_ANALYSIS=' + JSON.stringify(referenceAnalysis) + (lastPlannerError ? '\nPREVIOUS_ATTEMPT_ERROR=' + JSON.stringify(lastPlannerError) + '\nCorrect only the identified error and return one complete JSON document.' : '') },
         ],
         schema: spatialPlanSchema,
         traceContext: { runId: job.id, phase: 'planning', attempt: attempt + 1, traceLevel: job.traceLevel },
@@ -199,7 +202,10 @@ async function buildPlan(job, referenceAnalysis) {
       if (lastIncident) await mutateJob(job.id, (item) => { markRecovered(item, lastIncident); return item; });
       return plan;
     } catch (cause) {
-      structuralIssues = cause.details || structuralIssues;
+      if (Array.isArray(cause.details)) structuralIssues = cause.details;
+      lastPlannerError = { code: cause.code || 'PLAN_FAILED',
+        message: String(cause.message || '').slice(0, 260),
+        issues: Array.isArray(cause.details) ? cause.details.slice(0, 8) : [] };
       const snapshot = await mutateJob(job.id, (item) => {
         const incident = recordIncident(item, { stage: 'planning', code: cause.code || 'PLAN_FAILED', message: cause.message, details: cause.details });
         event(item, 'plan.retry', cause.message, { attempt: attempt + 1, issues: cause.details || [] });
@@ -207,15 +213,11 @@ async function buildPlan(job, referenceAnalysis) {
       });
       lastIncident = snapshot.recovery.incidents.at(-1);
       await traceIncident(snapshot, lastIncident);
-      if ((job.planningProvider || providerFor(job)) === 'local' && !noThinkingFallback &&
-          (cause.code === 'AI_THINKING_STALLED' ||
-            (cause.code === 'AI_INVALID_JSON' && cause.details?.preview === ''))) {
-        noThinkingFallback = true;
-        await traceEvent(job.id, 'PLAN_AI_STRATEGY_CHANGED', {
-          strategy: 'ollama_think_false', reason: cause.code,
-          note: 'Fallback de récupération ; la validation du schéma JSON reste obligatoire.',
-        }, { phase: 'planning', attempt: attempt + 1, traceLevel: job.traceLevel });
-      }
+      await traceEvent(job.id, 'PLAN_RETRY_DIAGNOSTIC', {
+        reason: cause.code || 'PLAN_FAILED', nextAttempt: attempt + 2,
+        think: (job.planningProvider || providerFor(job)) === 'local' ? config.ollamaPlanningThink : null,
+        issueCount: structuralIssues.length,
+      }, { phase: 'planning', attempt: attempt + 1, traceLevel: job.traceLevel });
       // Repeating a stalled model with identical inputs and settings is not a recovery strategy.
       // Stop after a genuine Ollama timeout and let the user choose another planning model
       // or increase the configured limits; leave normal retries for schema/structure failures.
