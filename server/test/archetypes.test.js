@@ -52,3 +52,10 @@ test('palm trunk rooted and fronds originate in upper crown',()=>{
   const maxTrunkY=Math.max(...trunk.map(x=>x.position[1]));
   assert.ok(fronds.filter(x=>x.position[1]>=maxTrunkY-5).length>=fronds.length/3);
 });
+
+test('shared parameter schema supports all archetype materials and ranges',()=>{
+  const fields=proceduralGeometrySchema.properties.params.properties;
+  for(const material of ['Wood','Rock','Slate','WoodPlanks','Grass','SmoothPlastic'])
+    assert.ok(fields.material.enum.includes(material),material);
+  assert.ok(fields.height.maximum>=1.1);
+});
