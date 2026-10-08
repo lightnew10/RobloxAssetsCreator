@@ -62,9 +62,12 @@ function providerFor(job) { return job.provider || getProviderRuntime().provider
 function visionProviderFor(job) { return job.visionProvider || getVisionRuntime().provider; }
 
 export async function createAssetJob(input = {}) {
-  const name = bounded(input.name, 80);
-  const brief = bounded(input.brief, 5000);
-  if (!name || !brief) throw Object.assign(new Error('Nom et brief requis.'), { code: 'JOB_INPUT_INVALID' });
+  const incomingImages=Array.isArray(input.referenceImages)?input.referenceImages.slice(0,4):[];
+  const hasValidImage=incomingImages.some(image=>/^data:image\\/(png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(String(image)));
+  const requestedText=bounded(input.brief||input.name,5000);
+  const brief=requestedText|| (hasValidImage?'Recréer en 3D low-poly l’objet principal visible sur la référence, sans inventer de détails non visibles.':'');
+  const name=bounded(input.name||requestedText.slice(0,72)||(hasValidImage?'Objet depuis une photo':''),80);
+  if (!name || !brief) throw Object.assign(new Error('Fournis une description ou une photo valide.'), { code: 'JOB_INPUT_INVALID' });
   const status = await getStudioStatus({ refresh: true });
   const studioId = bounded(input.studioId, 140);
   if (!studioId || !status.studios.some((x) => x.id === studioId) || status.access?.studioId !== studioId) {
@@ -98,7 +101,7 @@ export async function createAssetJob(input = {}) {
     variantTarget: target, traceLevel: input.traceLevel === 'off' ? 'off' : 'full',
     qualityPolicy: { initialVariants: target, autoAcceptScore: 8, essentialAcceptMinScore: 8, humanReviewMinScore: 5, essentialReviewMinScore: 5, maxPatchesPerCandidate: 2, maxRebuildsPerObject: 1, maxAttemptsPerObject: 9 },
     autoRebuilds: 0,
-    referenceImages: Array.isArray(input.referenceImages) ? input.referenceImages.slice(0, 4) : [],
+    referenceImages: incomingImages.filter(image=>/^data:image\\/(png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(String(image))),
     referenceAnalysis: null, plan: null, planVersion: 0, variants: [], feedback: [], memoryLessons, memoryExamples, selectedVariantId: null,
     status: 'queued', error: null, stopRequested: false, pendingCorrection: null, recovery: null, events: [],
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
