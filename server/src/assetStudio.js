@@ -1,5 +1,6 @@
 import { executeStudioTool } from './studioBridge.js';
 import { parseStudioMcpResult } from './studioMcpClient.js';
+import { traceEvent } from './trace.js';
 
 const clean = (value, n = 45) => String(value || 'Asset').replace(/[^\p{L}\p{N}_ -]/gu, '').slice(0, n);
 const folderName = (job) => 'RobloxAssetsCreator_' + job.id.slice(0, 8);
@@ -108,8 +109,23 @@ model.Parent=folder
 ${placement}`;
 }
 
-export async function buildNativeVariant(job, variant) {
-  const method = job.plan?.nativeMethod === 'generate_mesh' ? 'generate_mesh' : 'generate_procedural_model';
+export function describeNativeFailure(finished, method, jobId) {
+  const result = finished?.jobResult?.structuredContent || finished?.jobResult || null;
+  const values = [
+    finished?.error?.message, finished?.error, finished?.message, finished?.reason,
+    finished?.failureReason, finished?.errorMessage, result?.error?.message, result?.error,
+    result?.message, result?.reason, result?.failureReason,
+  ];
+  const reason = values.find((value) => typeof value === 'string' && value.trim()) || null;
+  return {
+    method, jobId, status: String(finished?.status || 'unknown'),
+    reason, providerDetailsAvailable: Boolean(reason),
+    // The full MCP response is already saved by executeStudioTool as a separate trace artifact.
+  };
+}
+
+export async function buildNativeVariant(job, variant, { methodOverride = null } = {}) {
+  const method = methodOverride || (job.plan?.nativeMethod === 'generate_mesh' ? 'generate_mesh' : 'generate_procedural_model');
   const size = job.plan?.sizeStuds;
   const args = method === 'generate_mesh'
     ? { studio_id: job.studioId, textPrompt: nativePrompt(job, variant), segmentation: 'explicit', partNames: partNames(job), ...(size ? { size: { x: size[0], y: size[1], z: size[2] } } : {}), maxTriangles: 12000, async: true }
@@ -117,7 +133,14 @@ export async function buildNativeVariant(job, variant) {
   const started = parseStudioMcpResult(await executeStudioTool(method, args, { runId: job.id, variantId: variant.id, phase: 'native_generation' }));
   if (!started?.jobId) throw Object.assign(new Error('Roblox n’a pas retourné de jobId pour la génération native.'), { code: 'NATIVE_JOB_INVALID', details: started });
   const finished = parseStudioMcpResult(await executeStudioTool('wait_job_finished', { studio_id: job.studioId, jobId: started.jobId, timeout: 600 }, { runId: job.id, variantId: variant.id, phase: 'native_generation' }));
-  if (finished?.status !== 'Completed') throw Object.assign(new Error('Génération native Roblox échouée : ' + String(finished?.status || 'unknown')), { code: 'NATIVE_GENERATION_FAILED', details: finished });
+  const diagnostic = describeNativeFailure(finished, method, started.jobId);
+  await traceEvent(job.id, 'NATIVE_GENERATION_RESULT', diagnostic, { phase: 'native_generation', variantId: variant.id });
+  if (finished?.status !== 'Completed') {
+    const reason = diagnostic.reason || 'Roblox/MCP ne fournit aucune cause détaillée dans le résultat du job.';
+    throw Object.assign(new Error('Génération native Roblox : ' + diagnostic.status + ' · ' + reason), {
+      code: 'NATIVE_GENERATION_FAILED', details: { ...diagnostic, response: finished },
+    });
+  }
   const details = finished.jobResult?.structuredContent || parseStudioMcpResult(finished.jobResult);
   const tag = typeof details?.tag === 'string' ? details.tag : null;
   const source = typeof (details?.modelPath || details?.path || details?.instancePath) === 'string' ? (details.modelPath || details.path || details.instancePath) : null;
