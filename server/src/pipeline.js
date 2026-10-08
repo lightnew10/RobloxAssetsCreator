@@ -89,6 +89,7 @@ export async function createAssetJob(input = {}) {
     schemaVersion: 2, id, name, brief, category: bounded(input.category || 'prop', 80), subtype: bounded(input.subtype, 80),
     style: bounded(input.style || 'stylized Roblox', 300), studioId, provider, visionProvider, planningProvider, planningModel,
     generationMode, engine, geometryStrategy: 'generic_primitives_v1',
+    previewDecomposition:input.previewDecomposition===true,planApproved:input.previewDecomposition!==true,
     variantTarget: target, traceLevel: input.traceLevel === 'off' ? 'off' : 'full',
     qualityPolicy: { initialVariants: target, autoAcceptScore: 8, essentialAcceptMinScore: 8, humanReviewMinScore: 5, essentialReviewMinScore: 5, maxPatchesPerCandidate: 2, maxRebuildsPerObject: 1, maxAttemptsPerObject: 9 },
     autoRebuilds: 0,
@@ -523,6 +524,14 @@ async function runFull(job) {
   job = await getJob(job.id);
   if (!job.plan) await buildPlan(job, referenceAnalysis);
   job = await getJob(job.id);
+  if (job.previewDecomposition && !job.planApproved) {
+    await mutateJob(job.id,item=>{
+      item.status='awaiting_decomposition_review';
+      event(item,'plan.review_required','Inventaire prêt : validation humaine avant construction.');
+      return item;
+    });
+    return;
+  }
   const current = job.variants.filter((x) => x.planVersion === job.planVersion && !x.correctionOf);
   if (current.length < job.variantTarget) {
     await mutateJob(job.id, (item) => {
@@ -635,6 +644,8 @@ async function runJob(id) {
         job = await getJob(id);
       }
       await runFull(job);
+      const afterFull = await getJob(id);
+      if(afterFull?.status==='awaiting_decomposition_review')return;
       await autoImprove(id);
     }
     job = await getJob(id);
@@ -671,6 +682,31 @@ export async function requestCorrection(jobId, input = {}) {
   });
   schedule(jobId);
   return job;
+}
+
+export async function approveDecomposition(jobId,input={}) {
+  const approved=await mutateJob(jobId,item=>{
+    if (item.status!=='awaiting_decomposition_review'||!item.plan)
+      throw Object.assign(new Error('Aucun inventaire en attente de validation.'),{code:'PLAN_NOT_REVIEWABLE'});
+    if (input.components!==undefined) {
+      if(!Array.isArray(input.components)||input.components.length<1||input.components.length>24)
+        throw Object.assign(new Error('Inventaire JSON invalide (1 à 24 composants).'),{code:'PLAN_INPUT_INVALID'});
+      const old=item.plan;
+      const parsed=normalizeSpatialPlan({...old,components:input.components},null,old.sizeStuds);
+      item.plan={...parsed,category:old.category,interpreterVersion:old.interpreterVersion};
+      item.planVersion++;
+    }
+    item.planApproved=true;
+    item.status='queued';
+    event(item,'plan.human_approved','Décomposition validée avant construction.',{
+      planVersion:item.planVersion,edited:input.components!==undefined
+    });
+    return item;
+  });
+  await traceArtifact(jobId,'plans','human_approved_inventory_v'+approved.planVersion,
+    approved.plan,{phase:'planning'});
+  schedule(jobId);
+  return approved;
 }
 
 export async function selectAndSave(jobId, variantId, userRating = null) {
