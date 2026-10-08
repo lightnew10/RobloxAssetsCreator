@@ -77,3 +77,5 @@ Si le systeme refuse l'arret d'un processus, fermer l'application concernee (ou 
 - Les événements `SPATIAL_PLAN_REPAIRED`, `AI_PROGRESS` et `PLAN_AI_STRATEGY_CHANGED` permettent de différencier une réparation logique d'un échec de sortie IA.
 
 Références : https://docs.ollama.com/capabilities/thinking ; https://github.com/ollama/ollama/issues/14645
+
+Après ce correctif, la valeur attendue de `server.buildTag` sur `http://127.0.0.1:3001/api/health` est **`model-root-repair-v2`** ; `spatial-root-repair-v1` indique une ancienne version. Après `git pull origin main`, redémarrer `start.bat` pour charger le code mis à jour.
