@@ -5,7 +5,7 @@ const providers = ['local','openai','claude','deepseek','gemini','openrouter'];
 const generationModes = [
   { id: 'local', title: 'Sans IA Roblox', description: 'Par défaut · planification IA et construction 3D par Parts. Roblox Studio sert à placer et capturer le modèle, sans génération IA native.' },
   { id: 'roblox', title: 'IA Roblox uniquement', description: 'Géométrie générée par Roblox via MCP, sans repli vers les Parts. Le provider IA configuré peut encore participer au plan et à la critique.' },
-  { id: 'hybrid', title: 'Local + IA Roblox', description: 'Roblox natif d’abord si disponible, puis notre pipeline Parts si nécessaire. Le moteur effectif reste identifié pour chaque variante.' },
+  { id: 'hybrid', title: 'Local + IA Roblox', description: 'Parts par défaut ; Roblox natif si disponible pour les catégories organiques, puis repli Parts. Les anciens jobs gardent leur choix initial.' },
 ];
 const generationModeName = (id) => generationModes.find(mode => mode.id === id)?.title || generationModes[0].title;
 const sourceName = (variant) => (variant.generationSource || (variant.engineUsed === 'native' ? 'roblox_native' : variant.engineUsed?.startsWith('parts') ? 'local_parts' : '')) === 'roblox_native'
@@ -19,7 +19,7 @@ const api = async (url, options={}) => {
 const scoreClass = (score) => score >= 8 ? 'good' : score >= 5 ? 'mid' : 'bad';
 const statusLabel = {
   queued:'En attente',understanding:'Analyse référence',planning:'Planification',generating:'Génération',
-  review_ready:'À valider',saved:'Sauvegardé',failed:'Erreur',stopped:'Arrêté',interrupted:'Interrompu'
+  review_ready:'À valider',awaiting_decomposition_review:'Inventaire à valider',saved:'Sauvegardé',failed:'Erreur',stopped:'Arrêté',interrupted:'Interrompu'
 };
 
 function ProviderSettings({settings,onClose,onReload}) {
@@ -115,7 +115,7 @@ function StudioPanel({studio,onRefresh}) {
 }
 
 function CreatePanel({settings,studio,onCreated}) {
-  const [form,setForm]=useState({name:'',brief:'',category:'tree',subtype:'',style:'stylized Roblox',provider:settings.selectedProvider,planningProvider:settings.selectedProvider,planningModel:'',visionProvider:settings.selectedVisionProvider,variantTarget:3});
+  const [form,setForm]=useState({name:'',brief:'',category:'auto',subtype:'',style:'Roblox low-poly, formes simplifiées, arêtes franches',sizeStuds:[10,12,10],maxParts:180,previewDecomposition:false,provider:settings.selectedProvider,planningProvider:settings.selectedProvider,planningModel:'',visionProvider:settings.selectedVisionProvider,variantTarget:3});
   const [images,setImages]=useState([]);
   const [error,setError]=useState('');
   useEffect(()=>setForm(f=>({...f,provider:settings.selectedProvider,visionProvider:settings.selectedVisionProvider})),[settings.selectedProvider,settings.selectedVisionProvider]);
@@ -136,8 +136,10 @@ function CreatePanel({settings,studio,onCreated}) {
     <div className="panel-head"><div><span className="eyebrow">NOUVEL ASSET</span><h2>Créer 3 variantes 3D</h2></div><span className="badge">Plan → Build → Capture → Review</span></div>
     <form onSubmit={submit}>
       <div className="form-grid">
-        <label>Nom de l'asset<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Cocotier tropical" /></label>
-        <label>Catégorie<select value={form.category} onChange={e=>setForm({...form,category:e.target.value})}><option>tree</option><option>bush</option><option>rock</option><option>building</option><option>furniture</option><option>prop</option><option>road</option><option>bridge</option></select></label>
+        <label>Nom de l'asset (facultatif)<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Cocotier tropical" /></label>
+        <label>Catégorie<select value={form.category} onChange={e=>setForm({...form,category:e.target.value})}><option value="auto">Auto-détection</option><option value="handheld">Objet tenu en main</option><option value="vehicle">Véhicule</option>
+        <option value="building">Bâtiment</option><option value="vegetation">Végétal</option><option value="animal">Animal</option>
+        <option value="furniture">Mobilier</option><option value="infrastructure">Infrastructure</option><option value="generic">Générique</option></select></label>
         <label>Sous-type<input value={form.subtype} onChange={e=>setForm({...form,subtype:e.target.value})} placeholder="coconut_palm, cherry_blossom..." /></label>
         <label>Style<input value={form.style} onChange={e=>setForm({...form,style:e.target.value})} /></label>
         <label>IA texte<select value={form.provider} onChange={e=>setForm({...form,provider:e.target.value})}>{providers.map(id=><option key={id} value={id} disabled={!settings.providers[id]?.configured}>{id}</option>)}</select></label>
@@ -145,15 +147,20 @@ function CreatePanel({settings,studio,onCreated}) {
         <label>Modèle de planification (facultatif)<input value={form.planningModel} onChange={e=>setForm({...form,planningModel:e.target.value})} placeholder="Vide = modèle du provider sélectionné" /></label>
         <label>IA vision<select value={form.visionProvider} onChange={e=>setForm({...form,visionProvider:e.target.value})}>{providers.map(id=><option key={id} value={id} disabled={!settings.providers[id]?.configured}>{id}</option>)}</select></label>
         <div className="generation-summary"><strong>Mode 3D actif</strong><span>{generationModeName(settings.generationMode)}</span><small>Modifiable via « Paramètres IA » en haut à droite.</small></div>
+        <label>Largeur (studs)<input type="number" min="0.2" max="200" step="0.2" value={form.sizeStuds[0]} onChange={e=>setForm({...form,sizeStuds:[Number(e.target.value),form.sizeStuds[1],form.sizeStuds[2]]})}/></label>
+        <label>Hauteur (studs)<input type="number" min="0.2" max="200" step="0.2" value={form.sizeStuds[1]} onChange={e=>setForm({...form,sizeStuds:[form.sizeStuds[0],Number(e.target.value),form.sizeStuds[2]]})}/></label>
+        <label>Profondeur (studs)<input type="number" min="0.2" max="200" step="0.2" value={form.sizeStuds[2]} onChange={e=>setForm({...form,sizeStuds:[form.sizeStuds[0],form.sizeStuds[1],Number(e.target.value)]})}/></label>
+        <label>Nombre de Parts maximal<input type="number" min="1" max="180" value={form.maxParts} onChange={e=>setForm({...form,maxParts:Number(e.target.value)})}/></label>
+        <label className="preview-toggle"><input type="checkbox" checked={form.previewDecomposition} onChange={e=>setForm({...form,previewDecomposition:e.target.checked})}/> Examiner la décomposition avant construction</label>
         <label>Variantes<select value={form.variantTarget} onChange={e=>setForm({...form,variantTarget:Number(e.target.value)})}>{[1,2,3,4,5,6].map(n=><option key={n}>{n}</option>)}</select></label>
       </div>
-      <label>Brief complet<textarea rows="5" value={form.brief} onChange={e=>setForm({...form,brief:e.target.value})} placeholder="Décris la silhouette, les proportions, les branches, feuilles, couleurs, détails indispensables..." /></label>
+      <label>Brief complet<textarea rows="5" value={form.brief} onChange={e=>setForm({...form,brief:e.target.value})} placeholder="Décris un objet en une phrase, ou ajoute une photo sans texte. Tu peux aussi détailler les proportions et les couleurs..." /></label>
       <div className="reference-row">
-        <label className="upload">Références visuelles<input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={e=>fileChange(e.target.files)} /></label>
+        <label className="upload" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();fileChange(e.dataTransfer.files)}}>Références visuelles — glisser/déposer ou cliquer<input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={e=>fileChange(e.target.files)} /></label>
         <div className="reference-previews">{images.map((src,i)=><img key={i} src={src} />)}</div>
       </div>
       {error&&<div className="error">{error}</div>}
-      <button className="primary launch" disabled={!form.name.trim()||!form.brief.trim()||!studio?.access?.studioId}>Lancer la création</button>
+      <button className="primary launch" disabled={(!form.name.trim()&&!form.brief.trim()&&images.length===0)||!studio?.access?.studioId}>Lancer la création</button>
     </form>
   </section>;
 }
@@ -168,23 +175,33 @@ function PlanView({job}) {
 
 function VariantCard({job,variant,onRefresh}) {
   const [feedback,setFeedback]=useState('');
+  const [rating,setRating]=useState('');
+  const [error,setError]=useState('');
   const [busy,setBusy]=useState(false);
   const correct=async(mode)=>{
     if(!feedback.trim())return;
     setBusy(true);try{await api('/api/jobs/'+job.id+'/correct',{method:'POST',body:JSON.stringify({variantId:variant.id,text:feedback,mode})});setFeedback('');await onRefresh()}finally{setBusy(false)}
   };
-  const save=async()=>{setBusy(true);try{await api('/api/jobs/'+job.id+'/select',{method:'POST',body:JSON.stringify({variantId:variant.id})});await onRefresh()}finally{setBusy(false)}};
+  const save=async()=>{setBusy(true);setError('');try{await api('/api/jobs/'+job.id+'/select',{method:'POST',body:JSON.stringify({variantId:variant.id,userRating:rating===''?null:Number(rating)})});await onRefresh()}catch(e){setError(e.message)}finally{setBusy(false)}};
   return <article className={'variant '+(job.bestVariantId===variant.id?'best':'')}>
     <div className="variant-head"><div><span className="variant-no">V{variant.order+1}</span><strong>{variant.profile?.label||'Variante'}</strong></div><div>{variant.review&&<span className={'score '+scoreClass(variant.review.score)}>{Number(variant.review.score).toFixed(1)}/10</span>}<span className="mini-status">{variant.status}</span></div></div>
     <div className="captures">{(variant.captures||[]).map((c,i)=><a key={c.fileName} href={'/api/jobs/'+job.id+'/captures/'+c.fileName} target="_blank"><img src={'/api/jobs/'+job.id+'/captures/'+c.fileName} alt={'vue '+(i+1)} /></a>)}</div>
     <div className="variant-meta"><span title={'Moteur effectif : '+(variant.engineUsed||job.engine)}>{sourceName(variant)}</span><span>{variant.technicalAudit?.partCount!=null?variant.technicalAudit.partCount+' parts':''}</span><span>{variant.technicalAudit?.passed?'audit OK':variant.technicalAudit?'audit KO':''}</span></div>
     {variant.review&&<div className="review"><p><strong>{variant.review.decision}</strong> · {variant.review.improvement}</p><div className="criteria">{(variant.review.criteria||[]).map((c,i)=><span key={i} title={c.comment}>{c.name}: {c.score}/10</span>)}</div></div>}
     {variant.status==='done'&&job.status==='review_ready'&&<div className="variant-actions">
-      <button className="primary" disabled={busy} onClick={save}>Choisir + sauvegarder</button>
+      <label>Ta note (0–10)
+        <select value={rating} onChange={e=>setRating(e.target.value)} aria-label="Note humaine">
+          <option value="">Choisir une note</option>
+          {Array.from({length:11},(_,i)=>i).map(n=><option key={n} value={n}>{n}/10</option>)}
+        </select>
+      </label>
+      <button className="primary" disabled={busy||rating===''} onClick={save}>Choisir + sauvegarder</button>
+      <small>La bibliothèque n'apprend que des assets explicitement choisis avec une note humaine ≥ 8/10.</small>
       <input value={feedback} onChange={e=>setFeedback(e.target.value)} placeholder="Correction à appliquer..." />
       <button disabled={busy||!feedback.trim()} onClick={()=>correct('patch')}>Patch</button>
       <button disabled={busy||!feedback.trim()} onClick={()=>correct('rebuild')}>Rebuild plan</button>
     </div>}
+    {error&&<div className="error">{error}</div>}
     {job.selectedVariantId===variant.id&&<div className="saved">Sauvegardé : {job.savedAsset?.path}</div>}
   </article>;
 }
@@ -210,6 +227,43 @@ function GenerationScoreSummary({job}) {
   </div>;
 }
 
+function DecompositionApproval({job,onRefresh}){
+  const [draft,setDraft]=useState(JSON.stringify(job.plan?.components||[],null,2));
+  const [error,setError]=useState(''),[busy,setBusy]=useState(false);
+  useEffect(()=>setDraft(JSON.stringify(job.plan?.components||[],null,2)),[job.id,job.planVersion]);
+  const approve=async()=>{
+    setBusy(true);setError('');
+    try{
+      const components=JSON.parse(draft);
+      if(!Array.isArray(components)||!components.length)throw new Error('Le JSON doit contenir une liste de composants.');
+      await api('/api/jobs/'+job.id+'/decomposition',{method:'POST',body:JSON.stringify({components})});
+      await onRefresh();
+    }catch(e){setError(e.message)}finally{setBusy(false)}
+  };
+  return <section className="decomposition-approval">
+    <h3>Aperçu de décomposition — validation requise</h3>
+    <p>Vérifie les composants, leurs identifiants et parents. Tu peux les renommer, retirer ou modifier leurs proportions dans le JSON ci-dessous. La construction attend ta validation.</p>
+    <textarea rows={12} spellCheck={false} aria-label="Composants de la décomposition" value={draft} onChange={e=>setDraft(e.target.value)}/>
+    {error&&<div className="error">{error}</div>}
+    <button className="primary" disabled={busy} onClick={approve}>Valider la décomposition et construire</button>
+  </section>;
+}
+
+function LearningDashboard({stats}){
+  if(!stats)return null;
+  return <section className="panel learning-dashboard">
+    <div className="panel-head"><div><span className="eyebrow">APPRENTISSAGE LOCAL</span><h2>Bibliothèque de références validées</h2></div>
+      <strong>{stats.totalValidated||0} exemple(s) humain(s)</strong></div>
+    <div className="dashboard-stats">
+      <div><b>Par catégorie</b><p>{Object.entries(stats.byCategory||{}).map(([category,count])=>category+' : '+count).join(' · ')||'Aucun exemple validé'}</p></div>
+      <div><b>Scores par moteur</b><p>{Object.entries(stats.engines||{}).map(([engine,x])=>engine+' : '+x.avgScore+'/10 ('+x.count+')').join(' · ')||'Aucune évaluation enregistrée'}</p></div>
+      <div><b>Jeu d'évaluation</b><p>{stats.evaluation?.fixtures?
+        stats.evaluation.passed+'/'+stats.evaluation.fixtures+' tests statiques · visuel '+(stats.evaluation.averageVisualScore==null?'non mesuré':stats.evaluation.averageVisualScore+'/10')
+        :'Pas encore exécuté'}</p></div>
+    </div>
+  </section>;
+}
+
 function JobDetail({job,onRefresh}) {
   const [traceOpen,setTraceOpen]=useState(false);
   const [trace,setTrace]=useState([]);
@@ -222,10 +276,11 @@ function JobDetail({job,onRefresh}) {
   const resume=async()=>{setActionBusy(true);try{await api('/api/jobs/'+job.id+'/resume',{method:'POST',body:'{}'});await onRefresh()}finally{setActionBusy(false)}};
   const stop=async()=>{setActionBusy(true);try{await api('/api/jobs/'+job.id+'/stop',{method:'POST',body:'{}'});await onRefresh()}finally{setActionBusy(false)}};
   return <section className="panel job-detail">
-    <div className="panel-head"><div><span className="eyebrow">JOB {job.id.slice(0,8)}</span><h2>{job.name}</h2><p>{job.brief}</p></div><div className="job-state"><span className={'status '+(['failed','interrupted'].includes(job.status)?'offline':job.status==='saved'||job.status==='review_ready'?'online':'working')}>{statusLabel[job.status]||job.status}</span><button onClick={openTrace}>Trace</button>{['failed','interrupted','stopped'].includes(job.status)&&<button className="primary" disabled={actionBusy} onClick={resume}>Reprendre</button>}{['queued','understanding','planning','generating'].includes(job.status)&&<button disabled={actionBusy} onClick={stop}>Arrêter</button>}</div></div>
+    <div className="panel-head"><div><span className="eyebrow">JOB {job.id.slice(0,8)}</span><h2>{job.name}</h2><p>{job.brief}</p></div><div className="job-state"><span className={'status '+(['failed','interrupted'].includes(job.status)?'offline':job.status==='saved'||job.status==='review_ready'?'online':'working')}>{statusLabel[job.status]||job.status}</span><button onClick={openTrace}>Trace</button>{['failed','interrupted','stopped'].includes(job.status)&&<button className="primary" disabled={actionBusy} onClick={resume}>Reprendre</button>}{['queued','understanding','planning','generating','awaiting_decomposition_review'].includes(job.status)&&<button disabled={actionBusy} onClick={stop}>Arrêter</button>}</div></div>
     {job.error&&<div className="error"><strong>{job.error.code}</strong> · {job.error.message}</div>}
     <GenerationScoreSummary job={job}/>
     <PlanView job={job}/>
+    {job.status==='awaiting_decomposition_review'&&<DecompositionApproval job={job} onRefresh={onRefresh}/>}
     <div className="variants">{(job.variants||[]).map(v=><VariantCard key={v.id} job={job} variant={v} onRefresh={onRefresh}/>)}</div>
     <div className="timeline"><h3>Activité</h3>{[...(job.events||[])].reverse().slice(0,40).map(e=><div key={e.id}><time>{new Date(e.at).toLocaleTimeString()}</time><strong>{e.type}</strong><span>{e.message}</span>{e.data && Object.keys(e.data).length > 0 && <details><summary>Détails techniques</summary><pre>{JSON.stringify(e.data,null,2).slice(0,12000)}</pre></details>}</div>)}</div>
     {traceOpen&&<div className="modal-backdrop"><div className="modal trace-modal"><div className="modal-head"><div><h2>FULL TRACE</h2><p>{trace.length} événements · {artifacts.length} artifacts</p></div><button onClick={()=>setTraceOpen(false)}>✕</button></div><div className="artifact-list">{artifacts.slice().reverse().map(a=><a key={a.id} href={'/api/jobs/'+job.id+'/trace/artifacts/'+a.id} target="_blank" rel="noreferrer"><strong>{a.category}</strong><span>{a.name}</span><small>{Math.round((a.size||0)/1024)} Ko</small></a>)}</div><pre>{trace.map(e=>JSON.stringify(e,null,2)).join('\n\n')}</pre></div></div>}
@@ -233,13 +288,13 @@ function JobDetail({job,onRefresh}) {
 }
 
 export default function App(){
-  const [health,setHealth]=useState(null),[settings,setSettings]=useState(null),[jobs,setJobs]=useState([]),[selectedId,setSelectedId]=useState(null),[settingsOpen,setSettingsOpen]=useState(false),[fatal,setFatal]=useState('');
+  const [health,setHealth]=useState(null),[stats,setStats]=useState(null),[settings,setSettings]=useState(null),[jobs,setJobs]=useState([]),[selectedId,setSelectedId]=useState(null),[settingsOpen,setSettingsOpen]=useState(false),[fatal,setFatal]=useState('');
   const selected=useMemo(()=>jobs.find(j=>j.id===selectedId)||jobs[0]||null,[jobs,selectedId]);
   const refreshSettings=async()=>{const d=await api('/api/provider-settings');setSettings(d.settings)};
   const refresh=async()=>{
     try{
-      const [h,j]=await Promise.all([api('/api/health'),api('/api/jobs')]);
-      setHealth(h);setJobs(j.jobs||[]);setFatal('');
+      const [h,j,t]=await Promise.all([api('/api/health'),api('/api/jobs'),api('/api/learning/stats').catch(()=>({stats:null}))]);
+      setHealth(h);setJobs(j.jobs||[]);setStats(t.stats||null);setFatal('');
       if(!selectedId&&j.jobs?.[0])setSelectedId(j.jobs[0].id);
     }catch(e){setFatal(e.message)}
   };
@@ -253,6 +308,7 @@ export default function App(){
         <StudioPanel studio={health?.studio} onRefresh={refresh}/>
         <CreatePanel settings={settings} studio={health?.studio} onCreated={job=>{setSelectedId(job.id);refresh()}}/>
       </div>
+      <LearningDashboard stats={stats}/>
       <section className="jobs-strip"><div className="jobs-title"><h3>Créations</h3><span>{jobs.length} job(s)</span></div><div className="job-tabs">{jobs.map(j=><button key={j.id} className={selected?.id===j.id?'active':''} onClick={()=>setSelectedId(j.id)}><strong>{j.name}</strong><span>{statusLabel[j.status]||j.status}</span></button>)}</div></section>
       {selected?<JobDetail job={selected} onRefresh={refresh}/>:<section className="empty"><h2>Aucun asset</h2><p>Connecte Studio, décris un asset et lance la première génération.</p></section>}
     </main>

@@ -12,9 +12,10 @@
     "start:server": "npm run start --workspace server",
     "build": "npm run build --workspace web",
     "test": "npm test --workspace server",
-    "verify": "npm run test && npm run build",
+    "verify": "npm run test && npm run build && npm run eval:fixtures && npm run export:dataset",
     "export:dataset": "node server/scripts/export-dataset.js",
-    "benchmark:planning": "node server/scripts/benchmark-planning.js"
+    "benchmark:planning": "node server/scripts/benchmark-planning.js",
+    "eval:fixtures": "node server/scripts/evaluate-fixtures.js"
   },
   "engines": {
     "node": ">=20.19.0"

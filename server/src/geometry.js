@@ -71,6 +71,7 @@ export function normalizeGeometry(raw, plan) {
       color: vec3(part?.color, 0, 255, [130,130,130]).map((x) => Math.round(x)),
       material: materials.has(part?.material) ? part.material : 'SmoothPlastic',
       canCollide: part?.canCollide !== false,
+      ...(part?.groupId ? { groupId: clean(part.groupId,60) } : {}),
     };
   });
   return { parts };

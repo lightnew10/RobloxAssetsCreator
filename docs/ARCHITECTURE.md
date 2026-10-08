@@ -1,86 +1,17 @@
-# Architecture Asset 3D
+# Architecture RobloxAssetsCreator (générique low-poly)
 
-## Pipeline principal
+## Nouveau chemin (jobs schemaVersion 2)
+Entrée texte ou 0–4 photos → compréhension vision locale → inventaire LLM (catégorie parmi 8 + composants, identifiants et parents) → réparation structurelle → aperçu JSON optionnel → détail géométrique par primitives génériques → validation → interprétation Parts déterministe → Studio MCP (Model, pivot bas, sous-groupes) → audit → 3 captures → critique vision locale → corrections ciblées / rebuild → revue humaine et note → sauvegarde.
 
-1. **Entrée**
-   - nom, catégorie, sous-type, style, brief ;
-   - 0 à 4 images de référence ;
-   - provider texte + provider vision ;
-   - moteur Auto / Parts / Roblox natif.
+Les gabarits de catégories sont versionnés sous `prompts/categories/*.md`. L'IA retourne du JSON et jamais du Lua. Les primitives `box,wedge,cylinder,ball,cone,sweep,revolve,extrude,group` sont interprétées par `server/src/primitives.js` sans fonction spécifique à l'objet. Voir PRIMITIVES.md. Les approximations par Parts sont documentées ; pas de CSG exact.
 
-2. **Understanding**
-   - les références visuelles sont analysées ;
-   - silhouette, structure, couleurs et détails à préserver deviennent du contexte de planification.
+## Compatibilité
+Les jobs historiques conservent leur schéma et leurs moteurs. Pour un nouveau job Parts, l'interpréteur générique est essayé en priorité ; si la sortie échoue, un événement explicite de FULL TRACE signale le repli sur l'ancien constructeur Parts. Le mode Roblox natif ne se transforme pas silencieusement en Parts quand il est sélectionné seul. Le mode Auto privilégie Parts sur les catégories ordinaires et le natif pour certaines catégories organiques.
 
-3. **Plan 3D**
-   - JSON structuré ;
-   - dimensions en studs ;
-   - composants et relations parent/enfant ;
-   - critères essentiels ;
-   - vues de capture ;
-   - méthode native suggérée.
+## Rôles IA et confidentialité
+TEXT_MODEL : inventaire et paramètres. VISION_MODEL : photo. CRITIC_MODEL optionnel : contrôle visuel. Sérialisation des appels locaux, keep_alive:0, OLLAMA_NUM_CTX=8192. Aucune photo ne part vers un provider distant ; les appels image via visionStructuredChat y sont bloqués. Les appels texte distants restent optionnels, jamais sélectionnés automatiquement.
 
-4. **Réparation structurelle**
-   - normalisation des IDs ;
-   - résolution par id/nom/rôle ;
-   - détection `missing_parent`, `self_parent`, ambiguïtés et cycles ;
-   - nouvelle planification ciblée si la réparation déterministe ne suffit pas ;
-   - circuit breaker après trois erreurs identiques.
-
-5. **Variantes**
-   - 3 variantes par défaut ;
-   - profils réellement différents : équilibrée, silhouette, détaillée ;
-   - jusqu'à 6 variantes configurables.
-
-6. **Construction**
-   - **Parts** : l'IA produit la géométrie exacte ; audit avant Studio ; fallback déterministe segmenté ;
-   - **Native** : `generate_mesh` ou `generate_procedural_model` puis `wait_job_finished` ;
-   - **Auto** : natif si disponible, sinon Parts.
-
-7. **Audit Studio**
-   - modèle présent ;
-   - nombre de BaseParts ;
-   - ancrage ;
-   - bounds ;
-   - matériaux.
-
-8. **Captures**
-   - trois vues ;
-   - retries ;
-   - fichiers persistés dans `data/runtime/captures`.
-
-9. **Critique visuelle**
-   - score 0-10 ;
-   - critères essentiels ;
-   - décision accept / patch / rebuild ;
-   - problèmes par composant.
-
-10. **Review utilisateur**
-    - sélection ;
-    - patch ciblé ;
-    - rebuild complet du plan ;
-    - sauvegarde explicite dans `ServerStorage/RobloxAssetsCreator_Assets`.
-
-11. **Learning**
-    - aucun feedback brut n'est promu automatiquement ;
-    - les leçons deviennent réutilisables uniquement après sélection humaine d'une variante ;
-    - les futures créations similaires réutilisent les leçons validées par catégorie/sous-type.
-
-12. **FULL TRACE**
-    - requêtes/réponses IA ;
-    - plans ;
-    - appels MCP ;
-    - captures ;
-    - incidents ;
-    - apprentissage ;
-    - clés et secrets redacted.
-
-## Récupération des erreurs
-
-Une signature est construite avec stage + code + cause + variante.
-
-- erreur #1 identique : retry / réparation déterministe ;
-- erreur #2 identique : stratégie alternative ou replan ciblé ;
-- erreur #3 identique : stop du job + alerte Telegram si configurée.
-
-L'objectif est de ne plus laisser une erreur `missing_parent` ou MCP faire échouer silencieusement toute une création.
+## Revue et apprentissage
+Le serveur peut arrêter un job au statut awaiting_decomposition_review si l'utilisateur active l'aperçu. La validation POST /api/jobs/:id/decomposition peut contenir un tableau de composants édité. La sauvegarde comprend une note humaine ; seuls les choix notés au moins 8 rejoignent library.jsonl. Les exemples natifs Roblox ne sont pas utilisés comme données d'entraînement. Les leçons historiques restent séparées.
+FULL TRACE existant conserve les requêtes/réponses, plans, appels MCP, erreurs et captures ; de nouveaux événements `PRIMITIVE_GEOMETRY_BUILT`, `TARGETED_PRIMITIVE_PATCH`, `HUMAN_SELECTION` signalent les étapes de cette version.
+Les 28 briefs d'évaluation ne sont pas une mesure visuelle tant que les captures et scores réels n'ont pas été produits.

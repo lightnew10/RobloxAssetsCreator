@@ -6,7 +6,7 @@ import { GENERATION_MODES, normalizeGenerationMode } from './generationMode.js';
 const file = path.join(config.dataRoot, 'provider-settings.json');
 export const providerIds = ['local', 'openai', 'claude', 'deepseek', 'gemini', 'openrouter'];
 const defaultsById = {
-  local: { textModel: 'qwen3.5:9b', visionModel: 'qwen3-vl:4b-instruct', apiKey: '' },
+  local: { textModel: config.textModel, visionModel: config.visionModel, apiKey: '' },
   openai: { textModel: 'gpt-5.6-sol', visionModel: 'gpt-5.6-sol', apiKey: '' },
   claude: { textModel: 'claude-sonnet-5-5', visionModel: 'claude-sonnet-5-5', apiKey: '' },
   deepseek: { textModel: 'deepseek-chat', visionModel: '', apiKey: '' },

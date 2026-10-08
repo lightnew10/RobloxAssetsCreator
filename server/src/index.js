@@ -5,10 +5,11 @@ import { clearProviderKey, getProviderSettings, updateProviderSettings } from '.
 import { providerHealth, ollamaMemoryDiagnostic } from './providers.js';
 import { getStudioStatus, grantStudioAccess, listStudioTools, readStudioTree, revokeStudioAccess } from './studioBridge.js';
 import { closeStudioMcp } from './studioMcpClient.js';
-import { createAssetJob, queueStatus, reconcileInterruptedJobs, requestCorrection, resumeJob, selectAndSave, stopJob } from './pipeline.js';
+import { approveDecomposition, createAssetJob, queueStatus, reconcileInterruptedJobs, requestCorrection, resumeJob, selectAndSave, stopJob } from './pipeline.js';
 import { getJob, listJobs } from './store.js';
 import { capturePath } from './capture.js';
 import { readTrace, readTraceArtifacts, resolveTraceArtifact } from './trace.js';
+import { learningStats } from './stats.js';
 
 const app = express();
 function publicJob(job) {
@@ -36,9 +37,10 @@ app.get('/api/health', async (_req,res) => {
     getStudioStatus().catch((e)=>({status:'disconnected',detail:e.message,studios:[],tools:[]})),
     providerHealth().catch(()=>({local:{ok:false}})),
   ]);
-  res.json({ ok:true, server:{host:config.host,port:config.port,traceLevel:config.traceLevel,buildTag:'windows-save-recovery-v5'}, studio, providers, queue:queueStatus() });
+  res.json({ ok:true, server:{host:config.host,port:config.port,traceLevel:config.traceLevel,buildTag:'generic-lowpoly-v6'}, studio, providers, queue:queueStatus() });
 });
 
+app.get('/api/learning/stats',async(_req,res,next)=>{try{res.json({ok:true,stats:await learningStats()});}catch(e){next(e);}});
 app.get('/api/provider-settings', (_req,res)=>res.json({ok:true,settings:getProviderSettings()}));
 app.put('/api/provider-settings', (req,res,next)=>{
   try { res.json({ok:true,settings:updateProviderSettings(req.body||{})}); } catch(e){ next(e); }
@@ -67,8 +69,9 @@ app.get('/api/jobs/:jobId', async (req,res,next)=>{
     res.json({ok:true,job:publicJob(job),queue:queueStatus()});
   } catch(e){next(e);}
 });
+app.post('/api/jobs/:jobId/decomposition',async(req,res,next)=>{try{res.status(202).json({ok:true,job:publicJob(await approveDecomposition(req.params.jobId,req.body||{}))});}catch(e){next(e);}});
 app.post('/api/jobs/:jobId/correct', async (req,res,next)=>{ try{res.status(202).json({ok:true,job:publicJob(await requestCorrection(req.params.jobId,req.body||{}))});}catch(e){next(e);} });
-app.post('/api/jobs/:jobId/select', async (req,res,next)=>{ try{res.json({ok:true,job:publicJob(await selectAndSave(req.params.jobId,req.body?.variantId))});}catch(e){next(e);} });
+app.post('/api/jobs/:jobId/select', async (req,res,next)=>{ try{res.json({ok:true,job:publicJob(await selectAndSave(req.params.jobId,req.body?.variantId,req.body?.userRating))});}catch(e){next(e);} });
 app.post('/api/jobs/:jobId/stop', async (req,res,next)=>{ try{res.json({ok:true,job:publicJob(await stopJob(req.params.jobId))});}catch(e){next(e);} });
 app.post('/api/jobs/:jobId/resume', async (req,res,next)=>{
   try {

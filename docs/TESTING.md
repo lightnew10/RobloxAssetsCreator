@@ -158,3 +158,18 @@ Rejouer le même cocotier avec **Auto**, puis vérifier `API ollama-native-diagn
 10. Exécuter éventuellement npm run benchmark:planning et comparer les sorties sur les mêmes briefs. Deux étapes non activées par défaut.
 
 Ces essais Studio, Ollama réel et validité visuelle ne sont pas exécutables par CI ; ne pas les déclarer réussis sans contrôle manuel.
+
+## Tests de la refonte générique
+
+La CI exécute npm run verify sous Ubuntu et Windows : tests unitaires du serveur, build Vite puis 28 fixtures statiques de catégorie/gabarit.
+Les tests manuels (non exécutés en CI) :
+1. Ouvrir une place Roblox Studio vide, autoriser MCP, sélectionner Sans IA Roblox.
+2. Décrire un crayon ou une poignée low-poly, taille en studs, maxParts 180 et 3 variantes. Activer « Examiner la décomposition ». Vérifier l'inventaire, changer un composant JSON, valider ; la génération doit reprendre.
+3. Vérifier les pièces, pivot au sol, noms des sous-Models, captures face/profil/haut, et l'absence de génération Roblox native.
+4. Tester sweep (branche), revolve (bouteille), extrude (profil), cone (abat-jour) ; détecter les limites de la géométrie facettée.
+5. Tester une référence photo PNG : vision LOCALE, critique et diagnostics de similarité sans fuite vers un provider externe.
+6. Donner une note humaine de 7 : pas d'entrée dans library.jsonl. Donner 8 : une entrée structurée avec la décomposition. L'asset doit être sauvegardé dans ServerStorage.
+7. npm run export:dataset doit écrire data/exports/dataset.jsonl et exclure les exemples sans note humaine, les notes inférieures à 8 et les assets natifs Roblox.
+8. Vérifier FULL TRACE, interrompre et reprendre un job ; tester Ollama arrêté et Studio déconnecté.
+9. Exécuter npm run eval:fixtures : il ne mesure que les contrôles statiques et ne génère aucune note de ressemblance.
+10. Noter et capturer les 28 briefs dans data/eval/objects.json avant de prétendre que la qualité visuelle progresse.

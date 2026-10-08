@@ -23,19 +23,19 @@ export async function readValidatedExamples(source=examplesPath){
     try{
       const entry=JSON.parse(line);
       return entry?.humanValidated===true && entry.validationSource==='human_selection' &&
-        Number.isFinite(entry.score) && entry.score>=8 && entry.score<=10 ? [entry] : [];
+        Number.isFinite(entry.humanRating) && entry.humanRating>=8 && Number.isFinite(entry.score) && entry.score>=8 && entry.score<=10 ? [entry] : [];
     }catch{return [];}
   });
 }
 let exampleQueue=Promise.resolve();
 export async function saveValidatedExample(job,variant,{destination=examplesPath}={}){
   // Human selection alone is not enough: never promote a low/unknown score.
-  const score=variant?.review?.score;
-  if(!Number.isFinite(score)||score<8||score>10||!job?.id||!variant?.id)return null;
+  const score=variant?.humanRating;
+  if(!Number.isFinite(score)||score<8||score>10||!job?.id||!variant?.id||variant.engineUsed==='native')return null;
   const definition=variant.geometryDefinition || null;
   const example={
     id:randomUUID(),createdAt:new Date().toISOString(),sourceJobId:job.id,sourceVariantId:variant.id,
-    humanValidated:true,validationSource:'human_selection',
+    humanValidated:true,validationSource:'human_selection',humanRating:score,aiScore:variant?.review?.score??null,
     name:job.name,brief:job.brief,category:job.category,subtype:job.subtype,
     plan:job.plan,archetype:definition?.archetype||null,params:definition?.params||null,
     variation:definition?.variation||null,score,
@@ -67,14 +67,15 @@ export async function relevantExamples({name,brief,category,subtype},limit=3,{so
 export async function relevantLessons({name,category,subtype},limit=12){
   const data=await read();
   const nameKey=key(name),categoryKey=key(category),subtypeKey=key(subtype);
-  return (data.lessons||[]).filter(lesson=>lesson.validatedBy==='human_selection'&&(
+  return (data.lessons||[]).filter(lesson=>lesson.validatedBy==='human_selection'&&Number.isFinite(lesson.humanRating)&&lesson.humanRating>=8&&(
     (subtypeKey&&lesson.subtypeKey===subtypeKey)||
     (categoryKey&&lesson.categoryKey===categoryKey)||
     (nameKey&&lesson.nameKey===nameKey)
   )).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,limit);
 }
 export async function learnFromSelection(job,variant){
-  // Only executed from explicit user selection, never from an automatic review.
+  // An explicit HUMAN rating is mandatory for durable example and lesson promotion.
+  if(!Number.isFinite(variant?.humanRating) || variant.humanRating<8 || variant.humanRating>10) return [];
   const example=await saveValidatedExample(job,variant);
   const data=await read();data.lessons||=[];
   const texts=[
@@ -88,7 +89,7 @@ export async function learnFromSelection(job,variant){
     const lesson={
       id:randomUUID(),createdAt:new Date().toISOString(),sourceJobId:job.id,sourceVariantId:variant?.id||null,
       nameKey:key(job.name),categoryKey:key(job.category),subtypeKey:key(job.subtype),text:text.slice(0,1200),
-      validatedBy:'human_selection',score:variant?.review?.score??null,
+      validatedBy:'human_selection',humanRating:variant.humanRating,score:variant.humanRating,
     };
     data.lessons.push(lesson);seen.add(text);added.push(lesson);
   }

@@ -17,10 +17,13 @@ end
 local cf,size=model:GetBoundingBox()
 model:PivotTo(CFrame.new(x-cf.Position.X,size.Y/2-cf.Position.Y,-cf.Position.Z)*model:GetPivot())
 cf,size=model:GetBoundingBox()
+model.WorldPivot=CFrame.new(cf.Position.X,cf.Position.Y-size.Y/2,cf.Position.Z)
 return HttpService:JSONEncode({path=model:GetFullName(),centerX=cf.Position.X,centerY=cf.Position.Y,centerZ=cf.Position.Z,size={size.X,size.Y,size.Z}})`;
 
 export function buildPartsLuau(job, variant) {
-  const payload = { folder: folderName(job), model: modelName(job, variant), parts: variant.geometry.parts, jobId: job.id, variantId: variant.id };
+  const payload = { folder: folderName(job), model: modelName(job, variant), parts: variant.geometry.parts, jobId: job.id, variantId: variant.id,
+    category:job.plan?.category||job.category, schemaVersion:job.schemaVersion||1,
+    interpreterVersion:variant.geometryDefinition?.version||'legacy_parts', brief:String(job.brief||'').slice(0,600) };
   return `local HttpService=game:GetService("HttpService")
 local data=HttpService:JSONDecode(${JSON.stringify(JSON.stringify(payload))})
 local folder=workspace:FindFirstChild(data.folder)
@@ -31,6 +34,11 @@ local model=Instance.new("Model")
 model.Name=data.model
 model:SetAttribute("RACJobId",data.jobId)
 model:SetAttribute("RACVariantId",data.variantId)
+model:SetAttribute("RACCategory",data.category)
+model:SetAttribute("RACSchemaVersion",data.schemaVersion)
+model:SetAttribute("RACInterpreterVersion",data.interpreterVersion)
+model:SetAttribute("RACBrief",data.brief)
+local groups={}
 for index,spec in ipairs(data.parts) do
   local part=Instance.new(spec.shape=="wedge" and "WedgePart" or "Part")
   part.Name="Part_"..tostring(index)
@@ -44,7 +52,15 @@ for index,spec in ipairs(data.parts) do
   part.CanCollide=spec.canCollide==true
   local cf=CFrame.new(spec.position[1],spec.position[2],spec.position[3])*CFrame.Angles(math.rad(spec.rotation[1]),math.rad(spec.rotation[2]),math.rad(spec.rotation[3]))
   part.CFrame=spec.shape=="cylinder" and cf*CFrame.Angles(0,0,math.rad(90)) or cf
-  part.Parent=model
+  local key=spec.groupId
+  if key and key~='' then
+    if not groups[key] then
+      local g=Instance.new('Model') g.Name=key g.Parent=model groups[key]=g
+    end
+    part.Parent=groups[key]
+  else
+    part.Parent=model
+  end
 end
 model.Parent=folder
 ${placement}`;
@@ -192,7 +208,12 @@ export async function auditVariant(job, variant) {
 }
 
 export async function saveVariantToLibrary(job, variant) {
-  const payload = { folder: folderName(job), model: modelName(job, variant), category: clean(job.category || 'Autres', 40), type: clean(job.name, 55), assetName: clean(job.name, 45) + '_' + variant.id.slice(0, 8), variantId: variant.id };
+  const payload = { folder: folderName(job), model: modelName(job, variant), category: clean(job.plan?.category||job.category||'Autres', 40),
+    type: clean(job.name, 55), assetName: clean(job.name, 45) + '_' + variant.id.slice(0, 8),
+    variantId:variant.id, humanRating:Number.isFinite(variant.humanRating)?variant.humanRating:null,
+    engineUsed:variant.engineUsed||'unknown',schemaVersion:job.schemaVersion||1,
+    interpreterVersion:variant.geometryDefinition?.version||'legacy',
+    decomposition:variant.geometryDefinition?.primitives||null };
   const code = `local HttpService=game:GetService("HttpService")
 local data=HttpService:JSONDecode(${JSON.stringify(JSON.stringify(payload))})
 local sourceFolder=workspace:FindFirstChild(data.folder)
@@ -210,6 +231,14 @@ if existing then existing:Destroy() end
 local saved=source:Clone()
 saved.Name=data.assetName
 saved:SetAttribute("RACVariantId",data.variantId)
+saved:SetAttribute("RACEngineUsed",data.engineUsed)
+saved:SetAttribute("RACSchemaVersion",data.schemaVersion)
+saved:SetAttribute("RACInterpreterVersion",data.interpreterVersion)
+if data.humanRating~=nil then saved:SetAttribute("RACHumanRating",data.humanRating) end
+if data.decomposition then
+  local encoded=HttpService:JSONEncode(data.decomposition)
+  if #encoded<12000 then saved:SetAttribute("RACDecomposition",encoded) end
+end
 saved.Parent=kind
 return HttpService:JSONEncode({path=saved:GetFullName(),name=saved.Name})`;
   return parseStudioMcpResult(await executeStudioTool('execute_luau', { studio_id: job.studioId, datamodel_type: 'Edit', code }, { runId: job.id, variantId: variant.id, phase: 'save' }));

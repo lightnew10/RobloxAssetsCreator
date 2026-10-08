@@ -14,3 +14,6 @@ package-lock.json
 
 # Validated user selections used for local-only future training
 dataset.jsonl
+
+# Local personal learning exports
+data/exports/

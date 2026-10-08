@@ -1,12 +1,15 @@
+import {assertAllowedBrief} from './contentPolicy.js';
 import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
 import { getGenerationMode, getProviderRuntime, getVisionRuntime } from './providerSettings.js';
 import { engineForGenerationMode, engineForJob, generationModeForJob, generationSourceForEngine } from './generationMode.js';
 import { structuredChat, visionStructuredChat } from './providers.js';
+import { inventorySchema, resolveCategory, inferCategory, loadCategoryPrompt } from './categories.js';
+import { primitiveGeometrySchema, interpretPrimitives, PRIMITIVE_VERSION } from './primitives.js';
 import { normalizeSpatialPlan, spatialPlanSchema } from './spatialPlan.js';
 import { fallbackGeometry, geometryAudit, geometrySchema, legacyGeometrySchema, normalizeGeometry, seedFor, variationProfiles } from './geometry.js';
 import { buildProceduralGeometry, guessArchetype, proceduralGeometrySchema } from './archetypes/index.js';
-import { geometrySystem, geometryUser, plannerSystem, plannerUser, reviewSystem } from './prompts.js';
+import { geometrySystem, genericGeometrySystem, geometryUser, plannerSystem, plannerUser, reviewSystem } from './prompts.js';
 import { auditVariant, buildNativeVariant, buildPartsVariant, saveVariantToLibrary } from './assetStudio.js';
 import { captureThreeViews } from './capture.js';
 import { getStudioStatus, listStudioTools } from './studioBridge.js';
@@ -15,7 +18,9 @@ import { markRecovered, recordIncident, traceIncident } from './recovery.js';
 import { sendCriticalAlert } from './telegram.js';
 import { traceArtifact, traceEvent } from './trace.js';
 import { learnFromSelection, relevantLessons, relevantExamples } from './learning.js';
+import { saveLibrarySelection, searchLibrary } from './library.js';
 import { recordVariantMetric } from './metrics.js';
+import { normalizeAssetInput } from './input.js';
 import { referenceSimilarity } from './referenceSimilarity.js';
 import { qualityBatchDecision, rankQualityVariant } from './qualityPolicy.js';
 
@@ -59,9 +64,7 @@ function providerFor(job) { return job.provider || getProviderRuntime().provider
 function visionProviderFor(job) { return job.visionProvider || getVisionRuntime().provider; }
 
 export async function createAssetJob(input = {}) {
-  const name = bounded(input.name, 80);
-  const brief = bounded(input.brief, 5000);
-  if (!name || !brief) throw Object.assign(new Error('Nom et brief requis.'), { code: 'JOB_INPUT_INVALID' });
+  const {name,brief,referenceImages:incomingImages}=normalizeAssetInput(input);
   const status = await getStudioStatus({ refresh: true });
   const studioId = bounded(input.studioId, 140);
   if (!studioId || !status.studios.some((x) => x.id === studioId) || status.access?.studioId !== studioId) {
@@ -79,16 +82,23 @@ export async function createAssetJob(input = {}) {
   const engine = engineForGenerationMode(generationMode);
   const id = randomUUID();
   const target = Math.max(1, Math.min(config.maxVariants, Number(input.variantTarget) || 3));
+  const requestedSizeStuds=Array.isArray(input.sizeStuds) && input.sizeStuds.length===3 &&
+    input.sizeStuds.every(v=>Number.isFinite(Number(v))&&Number(v)>=.2&&Number(v)<=200)
+    ? input.sizeStuds.map(Number) : null;
+  const maxParts=Math.max(1,Math.min(180,Number(input.maxParts)||180));
   const memoryLessons = await relevantLessons({ name, category: input.category || 'prop', subtype: input.subtype || '' });
-  const memoryExamples = await relevantExamples({ name, brief, category: input.category || 'prop', subtype: input.subtype || '' });
+  const libraryExamples = await searchLibrary({name,brief,category:input.category||'prop',subtype:input.subtype||''});
+  const memoryExamples = [...libraryExamples, ...(await relevantExamples({ name, brief, category: input.category || 'prop', subtype: input.subtype || '' }))].slice(0,3);
   const job = {
-    schemaVersion: 1, id, name, brief, category: bounded(input.category || 'prop', 80), subtype: bounded(input.subtype, 80),
-    style: bounded(input.style || 'stylized Roblox', 300), studioId, provider, visionProvider, planningProvider, planningModel,
-    generationMode, engine,
+    schemaVersion: 2, id, name, brief, category: bounded(input.category || 'prop', 80), subtype: bounded(input.subtype, 80),
+    style: bounded(input.style || 'Roblox low-poly stylisé, arêtes franches, palette réduite', 300), studioId, provider, visionProvider, planningProvider, planningModel,
+    generationMode, engine, geometryStrategy: 'generic_primitives_v1',
+    requestedSizeStuds,maxParts,
+    previewDecomposition:input.previewDecomposition===true,planApproved:input.previewDecomposition!==true,
     variantTarget: target, traceLevel: input.traceLevel === 'off' ? 'off' : 'full',
     qualityPolicy: { initialVariants: target, autoAcceptScore: 8, essentialAcceptMinScore: 8, humanReviewMinScore: 5, essentialReviewMinScore: 5, maxPatchesPerCandidate: 2, maxRebuildsPerObject: 1, maxAttemptsPerObject: 9 },
     autoRebuilds: 0,
-    referenceImages: Array.isArray(input.referenceImages) ? input.referenceImages.slice(0, 4) : [],
+    referenceImages: incomingImages,
     referenceAnalysis: null, plan: null, planVersion: 0, variants: [], feedback: [], memoryLessons, memoryExamples, selectedVariantId: null,
     status: 'queued', error: null, stopRequested: false, pendingCorrection: null, recovery: null, events: [],
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
@@ -171,9 +181,11 @@ async function analyzeReferences(job) {
       ],
       images, schema: referenceSchema, traceContext: { runId: job.id, phase: 'reference_understanding', traceLevel: job.traceLevel },
     });
+    assertAllowedBrief(response.data.summary||'');
     await mutateJob(job.id, (item) => { item.referenceAnalysis = response.data; event(item, 'reference.analyzed', 'Références analysées.', { model: response.meta.model }); return item; });
     return response.data;
   } catch (cause) {
+    if(cause.code==='CONTENT_RESTRICTED')throw cause;
     await mutateJob(job.id, (item) => { event(item, 'reference.analysis_failed', cause.message, { code: cause.code }); return item; });
     return null;
   }
@@ -184,6 +196,9 @@ async function buildPlan(job, referenceAnalysis) {
   let lastIncident = null;
   let lastPlannerError = null;
   await mutateJob(job.id, (item) => { item.status = 'planning'; event(item, 'plan.started', 'Création du plan 3D.'); return item; });
+  const isGeneric = job.geometryStrategy === 'generic_primitives_v1';
+  const categoryHint = inferCategory(job);
+  const categoryTemplate = isGeneric ? await loadCategoryPrompt(categoryHint) : '';
   for (let attempt = 0; attempt < config.maxPlanAttempts; attempt += 1) {
     try {
       const response = await structuredChat({
@@ -192,15 +207,20 @@ async function buildPlan(job, referenceAnalysis) {
         // JSON planning is deterministic: do not burn long reasoning before answering.
         thinkOverride: (job.planningProvider || providerFor(job)) === 'local' ? config.ollamaPlanningThink : null,
         messages: [
-          { role: 'system', content: plannerSystem },
+          { role: 'system', content: plannerSystem + (isGeneric ? '\\nMODE: INVOICE COMPONENTS ONLY, NO LOW-LEVEL PARTS. Use category from enum. Keep JSON below 1500 output tokens.\\nCATEGORY_TEMPLATE: '+categoryTemplate : '') },
           { role: 'user', content: plannerUser({ brief: job.brief, category: job.category, subtype: job.subtype, style: job.style, feedback: [...(job.memoryLessons || []).map((x) => ({ source: 'validated_memory', text: x.text })), ...(job.feedback || [])], previousIssues: structuralIssues }) + '\nREFERENCE_ANALYSIS=' + JSON.stringify(referenceAnalysis) + (lastPlannerError ? '\nPREVIOUS_ATTEMPT_ERROR=' + JSON.stringify(lastPlannerError) + '\nCorrect only the identified error and return one complete JSON document.' : '') },
         ],
-        schema: spatialPlanSchema,
+        schema: isGeneric ? inventorySchema : spatialPlanSchema,
         traceContext: { runId: job.id, phase: 'planning', attempt: attempt + 1, traceLevel: job.traceLevel },
       });
       // Normalize only once: a second pass would discard the original repair
       // audit and could turn a successfully repaired virtual root into noise.
-      const plan = normalizeSpatialPlan(response.data, null, [10, 10, 10]);
+      const requested=job.requestedSizeStuds;
+      const plan = normalizeSpatialPlan(requested?{...response.data,sizeStuds:requested}:response.data,null,requested||[10,10,10]);
+      if(isGeneric){
+        plan.category=resolveCategory(response.data.category,job);
+        plan.interpreterVersion=PRIMITIVE_VERSION;
+      }
       structuralIssues = plan.structureNormalization?.unresolved || [];
       if (plan.structureNormalization?.repairs?.length) {
         await traceEvent(job.id, 'SPATIAL_PLAN_REPAIRED', {
@@ -245,7 +265,68 @@ async function buildPlan(job, referenceAnalysis) {
   }
 }
 
+async function makeGenericGeometry(job, variant){
+  const seed=seedFor([job.brief,job.category,variant.profile.id,PRIMITIVE_VERSION].join(':'));
+  let lastError=null;
+  const source=variant.correctionOf ? job.variants.find(x=>x.id===variant.correctionOf) : null;
+  const partial=Boolean(source?.geometryDefinition?.primitives&&source?.geometry?.parts?.length);
+  for(let attempt=0;attempt<config.maxGeometryAttempts;attempt+=1){
+    try{
+      const response=await structuredChat({
+        provider:providerFor(job),
+        messages:[
+          {role:'system',content:genericGeometrySystem + (partial ? '\\nCORRECTION CIBLÉE : produis uniquement les composants modifiés. Les autres composants seront conservés bit pour bit.':'')},
+          {role:'user',content:geometryUser({
+            plan:job.plan,profile:variant.profile,
+            examples:(job.memoryExamples||[]).filter(x=>x.decomposition),
+            feedback:[...(job.memoryLessons||[]).map(x=>({source:'validated_memory',text:x.text})),...(job.feedback||[])],
+            previousReview:variant.sourceReview||null,
+          })}
+        ],
+        schema:primitiveGeometrySchema,
+        traceContext:{runId:job.id,variantId:variant.id,phase:'geometry',attempt:attempt+1,traceLevel:job.traceLevel},
+      });
+      const built=interpretPrimitives(response.data,job.plan,{
+        profile:variant.profile.id,maxParts:job.maxParts||180,minDetail:.2,seed,allowPartial:partial
+      });
+      const changedIds=new Set(response.data.components.map(x=>x.componentId));
+      const combined=partial ? [...source.geometry.parts.filter(p=>!changedIds.has(p.componentId)),...built.parts] : built.parts;
+      if(combined.length>(job.maxParts||180))
+        throw Object.assign(new Error('Correction dépasse le plafond de pièces.'),{code:'TOO_MANY_PARTS',details:{count:combined.length}});
+      const geometry=normalizeGeometry({parts:combined},job.plan);
+      const audit=geometryAudit(geometry,job.plan);
+      if(!audit.passed)throw Object.assign(new Error('Audit primitives : '+audit.issues.map(x=>x.code).join(', ')),
+        {code:'GEOMETRY_AUDIT_FAILED',details:audit.issues});
+      const finalDefinition=partial ? {components:[...source.geometryDefinition.primitives.components.filter(x=>!changedIds.has(x.componentId)),...response.data.components]} : response.data;
+      if(partial)await traceEvent(job.id,'TARGETED_PRIMITIVE_PATCH',{changedComponents:[...changedIds],retainedParts:source.geometry.parts.length-combined.length+built.parts.length},{variantId:variant.id,phase:'geometry'});
+      await traceArtifact(job.id,'plans','primitive_decomposition_'+variant.id,{
+        schemaVersion:2,interpreterVersion:PRIMITIVE_VERSION,decomposition:finalDefinition,warnings:built.warnings,
+      },{variantId:variant.id,phase:'geometry'});
+      await traceEvent(job.id,'PRIMITIVE_GEOMETRY_BUILT',{
+        interpreterVersion:PRIMITIVE_VERSION,partCount:geometry.parts.length,
+        warnings:built.warnings,seed,category:job.plan.category
+      },{variantId:variant.id,phase:'geometry'});
+      return {geometry,audit,definition:{
+        archetype:null,primitives:finalDefinition,version:PRIMITIVE_VERSION,variation:variant.profile.id,
+      },generation:{provider:response.meta.provider,model:response.meta.model,fallback:false}};
+    }catch(cause){
+      lastError=cause;
+      await traceEvent(job.id,'GENERIC_PRIMITIVE_RETRY',{code:cause.code||'PRIMITIVE_ERROR',
+        message:cause.message,details:cause.details||null},
+        {variantId:variant.id,phase:'geometry',attempt:attempt+1});
+    }
+  }
+  await traceEvent(job.id,'GENERIC_PRIMITIVE_FALLBACK',{
+    reason:lastError?.message||'Unknown failure',mode:'legacy_parts'
+  },{variantId:variant.id,phase:'geometry'});
+  return null;
+}
+
 async function makeGeometry(job, variant) {
+  if(job.geometryStrategy === 'generic_primitives_v1'){
+    const generic=await makeGenericGeometry(job,variant);
+    if(generic)return generic;
+  }
   let lastError = null;
   const seed = seedFor(job.id + ':' + variant.id);
   const expectedArchetype = guessArchetype(job);
@@ -354,7 +435,14 @@ async function runVariant(jobId, variantId) {
     mode: selectedMode, requestedEngine: engine, variantId,
   }, { phase: 'generation', variantId, traceLevel: job.traceLevel });
   const tools = (await listStudioTools()).map((x) => x.name);
-  if (engine === 'auto') engine = tools.includes(job.plan.nativeMethod) && tools.includes('wait_job_finished') ? 'native' : 'parts';
+  if (engine === 'auto') {
+    const category=job.plan?.category||inferCategory(job);
+    const organic=['animal','vegetation'].includes(category) ||
+      (category==='generic' && /rock|stone|pierre|roche|rocher/i.test(job.brief));
+    const wantNative=job.geometryStrategy !== 'generic_primitives_v1' || organic;
+    engine = wantNative && tools.includes(job.plan.nativeMethod) && tools.includes('wait_job_finished')
+      ? 'native' : 'parts';
+  }
   if (engine === 'native' && (!tools.includes(job.plan.nativeMethod) || !tools.includes('wait_job_finished'))) {
     throw Object.assign(new Error('La génération native demandée nécessite ' + job.plan.nativeMethod + ' et wait_job_finished dans le serveur MCP Roblox.'), {
       code: 'NATIVE_TOOL_UNAVAILABLE', details: { nativeMethod: job.plan.nativeMethod, availableTools: tools },
@@ -459,6 +547,14 @@ async function runFull(job) {
   job = await getJob(job.id);
   if (!job.plan) await buildPlan(job, referenceAnalysis);
   job = await getJob(job.id);
+  if (job.previewDecomposition && !job.planApproved) {
+    await mutateJob(job.id,item=>{
+      item.status='awaiting_decomposition_review';
+      event(item,'plan.review_required','Inventaire prêt : validation humaine avant construction.');
+      return item;
+    });
+    return;
+  }
   const current = job.variants.filter((x) => x.planVersion === job.planVersion && !x.correctionOf);
   if (current.length < job.variantTarget) {
     await mutateJob(job.id, (item) => {
@@ -571,6 +667,8 @@ async function runJob(id) {
         job = await getJob(id);
       }
       await runFull(job);
+      const afterFull = await getJob(id);
+      if(afterFull?.status==='awaiting_decomposition_review')return;
       await autoImprove(id);
     }
     job = await getJob(id);
@@ -609,14 +707,48 @@ export async function requestCorrection(jobId, input = {}) {
   return job;
 }
 
-export async function selectAndSave(jobId, variantId) {
+export async function approveDecomposition(jobId,input={}) {
+  const approved=await mutateJob(jobId,item=>{
+    if (item.status!=='awaiting_decomposition_review'||!item.plan)
+      throw Object.assign(new Error('Aucun inventaire en attente de validation.'),{code:'PLAN_NOT_REVIEWABLE'});
+    if (input.components!==undefined) {
+      if(!Array.isArray(input.components)||input.components.length<1||input.components.length>24)
+        throw Object.assign(new Error('Inventaire JSON invalide (1 à 24 composants).'),{code:'PLAN_INPUT_INVALID'});
+      const old=item.plan;
+      const parsed=normalizeSpatialPlan({...old,components:input.components},null,old.sizeStuds);
+      item.plan={...parsed,category:old.category,interpreterVersion:old.interpreterVersion};
+      item.planVersion++;
+    }
+    item.planApproved=true;
+    item.status='queued';
+    event(item,'plan.human_approved','Décomposition validée avant construction.',{
+      planVersion:item.planVersion,edited:input.components!==undefined
+    });
+    return item;
+  });
+  await traceArtifact(jobId,'plans','human_approved_inventory_v'+approved.planVersion,
+    approved.plan,{phase:'planning'});
+  schedule(jobId);
+  return approved;
+}
+
+export async function selectAndSave(jobId, variantId, userRating = null) {
   let job = await getJob(jobId);
   const variant = job?.variants.find((x) => x.id === variantId && x.status === 'done');
   if (!job || !variant) throw Object.assign(new Error('Variante introuvable ou non terminée.'), { code:'VARIANT_NOT_READY' });
-  const saved = await saveVariantToLibrary(job, variant);
-  const lessons = await learnFromSelection(job, variant);
+  const rating = userRating===null||userRating===undefined?null:Number(userRating);
+  if (rating!==null && (!Number.isFinite(rating)||rating<0||rating>10))
+    throw Object.assign(new Error('Note humaine invalide (0 à 10).'),{code:'HUMAN_RATING_INVALID'});
+  const ratedVariant = {...variant,humanRating:rating};
+  const saved = await saveVariantToLibrary(job, ratedVariant);
+  const libraryExample = await saveLibrarySelection(job,ratedVariant,rating);
+  const lessons = await learnFromSelection(job, ratedVariant);
+  await traceEvent(job.id,'HUMAN_SELECTION',{
+    variantId, humanRating:rating,libraryAccepted:Boolean(libraryExample),libraryVersion:libraryExample?.version||null
+  },{phase:'learning',variantId});
   await traceArtifact(job.id, 'learning', 'validated_lessons', lessons, { phase: 'learning', variantId });
-  job = await mutateJob(jobId, (item) => { item.selectedVariantId=variantId; item.savedAsset=saved; item.status='saved'; item.validatedLessons=lessons; event(item,'variant.saved','Asset copié dans ServerStorage/RobloxAssetsCreator_Assets.',{variantId,path:saved?.path,lessons:lessons.length}); return item; });
+  job = await mutateJob(jobId, (item) => { item.selectedVariantId=variantId; item.savedAsset=saved; item.status='saved'; item.validatedLessons=lessons; item.humanRating=rating;
+    const selected=item.variants.find(x=>x.id===variantId); if(selected)selected.humanRating=rating; event(item,'variant.saved','Asset copié dans ServerStorage/RobloxAssetsCreator_Assets.',{variantId,path:saved?.path,lessons:lessons.length,libraryAccepted:Boolean(libraryExample),humanRating:rating}); return item; });
   return job;
 }
 

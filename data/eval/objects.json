@@ -1,0 +1,342 @@
+{
+  "version": 1,
+  "goal": "Évaluation récurrente de catégories et géométrie; notes visuelles humaines à compléter",
+  "objects": [
+    {
+      "id": "eval_01",
+      "brief": "Poignée de porte en métal arrondi",
+      "category": "handheld",
+      "sizeStuds": [
+        3,
+        1,
+        1
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_02",
+      "brief": "Crayon jaune avec gomme rose",
+      "category": "handheld",
+      "sizeStuds": [
+        1,
+        5,
+        1
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_03",
+      "brief": "Stylo noir avec clip",
+      "category": "handheld",
+      "sizeStuds": [
+        1,
+        5,
+        1
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_04",
+      "brief": "Embout de chargeur USB métallique",
+      "category": "handheld",
+      "sizeStuds": [
+        2,
+        1,
+        1
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_05",
+      "brief": "Outil marteau en bois et métal",
+      "category": "handheld",
+      "sizeStuds": [
+        3,
+        5,
+        2
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_06",
+      "brief": "Voiture rouge à quatre roues",
+      "category": "vehicle",
+      "sizeStuds": [
+        10,
+        5,
+        6
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_07",
+      "brief": "Camion de livraison stylisé",
+      "category": "vehicle",
+      "sizeStuds": [
+        14,
+        7,
+        6
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_08",
+      "brief": "Vélo bleu avec deux roues",
+      "category": "vehicle",
+      "sizeStuds": [
+        8,
+        5,
+        3
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_09",
+      "brief": "Maison en bois avec toit rouge",
+      "category": "building",
+      "sizeStuds": [
+        12,
+        10,
+        10
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_10",
+      "brief": "Boutique low-poly avec vitrine",
+      "category": "building",
+      "sizeStuds": [
+        14,
+        9,
+        10
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_11",
+      "brief": "Tour en pierre",
+      "category": "building",
+      "sizeStuds": [
+        9,
+        18,
+        9
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_12",
+      "brief": "Cocotier tropical courbé",
+      "category": "vegetation",
+      "sizeStuds": [
+        12,
+        18,
+        12
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_13",
+      "brief": "Arbre feuillu à trois branches",
+      "category": "vegetation",
+      "sizeStuds": [
+        12,
+        15,
+        12
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_14",
+      "brief": "Fleur jaune à longue tige",
+      "category": "vegetation",
+      "sizeStuds": [
+        3,
+        6,
+        3
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_15",
+      "brief": "Chat roux stylisé Roblox",
+      "category": "animal",
+      "sizeStuds": [
+        6,
+        5,
+        7
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_16",
+      "brief": "Chien gris avec longue queue",
+      "category": "animal",
+      "sizeStuds": [
+        7,
+        5,
+        7
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_17",
+      "brief": "Oiseau bleu avec ailes déployées",
+      "category": "animal",
+      "sizeStuds": [
+        6,
+        3,
+        6
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_18",
+      "brief": "Chaise simple avec dossier",
+      "category": "furniture",
+      "sizeStuds": [
+        5,
+        6,
+        5
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_19",
+      "brief": "Table de salle à manger en bois",
+      "category": "furniture",
+      "sizeStuds": [
+        8,
+        5,
+        5
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_20",
+      "brief": "Lit simple avec oreiller",
+      "category": "furniture",
+      "sizeStuds": [
+        7,
+        4,
+        11
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_21",
+      "brief": "Route droite pavée",
+      "category": "infrastructure",
+      "sizeStuds": [
+        18,
+        1,
+        6
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_22",
+      "brief": "Pont en bois avec rambardes",
+      "category": "infrastructure",
+      "sizeStuds": [
+        20,
+        8,
+        7
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_23",
+      "brief": "Clôture basse avec poteaux",
+      "category": "infrastructure",
+      "sizeStuds": [
+        18,
+        3,
+        1
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_24",
+      "brief": "Lampadaire de rue avec abat-jour",
+      "category": "infrastructure",
+      "sizeStuds": [
+        3,
+        13,
+        3
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_25",
+      "brief": "Rocher volcanique angulaire",
+      "category": "generic",
+      "sizeStuds": [
+        6,
+        5,
+        6
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_26",
+      "brief": "Bouteille de potion stylisée",
+      "category": "generic",
+      "sizeStuds": [
+        3,
+        6,
+        3
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_27",
+      "brief": "Cube décoratif magique",
+      "category": "generic",
+      "sizeStuds": [
+        3,
+        3,
+        3
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    },
+    {
+      "id": "eval_28",
+      "brief": "Coffre au trésor et serrure",
+      "category": "generic",
+      "sizeStuds": [
+        6,
+        4,
+        4
+      ],
+      "referenceImage": null,
+      "manualVisualScore": null
+    }
+  ]
+}

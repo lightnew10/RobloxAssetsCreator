@@ -114,3 +114,13 @@ Au démarrage, GET /api/ps avertit si un modèle déjà chargé utilise partiell
 Conseil : modèle texte 7–8B en Q4_K_M, après comparaison de sa fiabilité sur les JSON. qwen3.5:9b reste configurable, sans garantie de chargement intégral sur une carte 8 Go.
 Variables du SERVEUR Ollama : OLLAMA_FLASH_ATTENTION=1 et OLLAMA_KV_CACHE_TYPE=q8_0. Les définir dans l'environnement Windows qui lance Ollama, puis redémarrer ce service. Leur compatibilité dépend des versions et modèles.
 Commande exploratoire : npm run benchmark:planning produit data/runtime/benchmark-planning.json en comparant une et deux étapes sur quatre briefs. Aucune stratégie expérimentale n'est activée automatiquement.
+
+## Configuration de la génération générique locale — 8 Go
+
+Dans server/.env : TEXT_MODEL=qwen3:8b, VISION_MODEL=qwen3-vl:4b-instruct, CRITIC_MODEL= (vide = vision).
+Ces défauts s'appliquent aux nouvelles configurations, mais n'écrasent pas les modèles enregistrés dans Paramètres IA.
+OLLAMA_NUM_CTX=8192. OLLAMA_PLAN_NUM_PREDICT=1500, OLLAMA_GEOMETRY_NUM_PREDICT=650 et OLLAMA_REVIEW_NUM_PREDICT=900.
+Les appels Ollama locaux sont séquentiels, keep_alive:0. La première requête après changement de modèle peut être plus lente.
+Variables d'environnement du processus OLLAMA (pas Node) : OLLAMA_FLASH_ATTENTION=1 et OLLAMA_KV_CACHE_TYPE=q8_0, sous réserve de compatibilité de la version.
+GET /api/ps et GET /api/tags sont consultés au démarrage / bilan. Un modèle 7–8B quantifié Q4_K_M peut être préférable sur 8 Go ; surveiller ollama ps.
+Le modèle de vision ne génère jamais le plan géométrique ; il extrait les caractéristiques visibles et critique les captures.
