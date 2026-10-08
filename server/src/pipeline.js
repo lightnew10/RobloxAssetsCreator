@@ -425,7 +425,14 @@ async function runVariant(jobId, variantId) {
     mode: selectedMode, requestedEngine: engine, variantId,
   }, { phase: 'generation', variantId, traceLevel: job.traceLevel });
   const tools = (await listStudioTools()).map((x) => x.name);
-  if (engine === 'auto') engine = tools.includes(job.plan.nativeMethod) && tools.includes('wait_job_finished') ? 'native' : 'parts';
+  if (engine === 'auto') {
+    const category=job.plan?.category||inferCategory(job);
+    const organic=['animal','vegetation'].includes(category) ||
+      (category==='generic' && /rock|stone|pierre|roche|rocher/i.test(job.brief));
+    const wantNative=job.geometryStrategy !== 'generic_primitives_v1' || organic;
+    engine = wantNative && tools.includes(job.plan.nativeMethod) && tools.includes('wait_job_finished')
+      ? 'native' : 'parts';
+  }
   if (engine === 'native' && (!tools.includes(job.plan.nativeMethod) || !tools.includes('wait_job_finished'))) {
     throw Object.assign(new Error('La génération native demandée nécessite ' + job.plan.nativeMethod + ' et wait_job_finished dans le serveur MCP Roblox.'), {
       code: 'NATIVE_TOOL_UNAVAILABLE', details: { nativeMethod: job.plan.nativeMethod, availableTools: tools },
