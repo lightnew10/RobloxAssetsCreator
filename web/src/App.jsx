@@ -188,6 +188,7 @@ function VariantCard({job,variant,onRefresh}) {
     <div className="captures">{(variant.captures||[]).map((c,i)=><a key={c.fileName} href={'/api/jobs/'+job.id+'/captures/'+c.fileName} target="_blank"><img src={'/api/jobs/'+job.id+'/captures/'+c.fileName} alt={'vue '+(i+1)} /></a>)}</div>
     <div className="variant-meta"><span title={'Moteur effectif : '+(variant.engineUsed||job.engine)}>{sourceName(variant)}</span><span>{variant.technicalAudit?.partCount!=null?variant.technicalAudit.partCount+' parts':''}</span><span>{variant.technicalAudit?.passed?'audit OK':variant.technicalAudit?'audit KO':''}</span></div>
     {variant.review&&<div className="review"><p><strong>{variant.review.decision}</strong> · {variant.review.improvement}</p><div className="criteria">{(variant.review.criteria||[]).map((c,i)=><span key={i} title={c.comment}>{c.name}: {c.score}/10</span>)}</div></div>}
+    {variant.defects?.length>0&&<ul className="review-defects">{variant.defects.map((defect,i)=><li key={i}>{defect.component} · {defect.issue} · {defect.severity}</li>)}</ul>}
     {variant.status==='done'&&job.status==='review_ready'&&<div className="variant-actions">
       <label>Ta note (0–10)
         <select value={rating} onChange={e=>setRating(e.target.value)} aria-label="Note humaine">

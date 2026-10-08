@@ -8,7 +8,8 @@ import { inventorySchema, resolveCategory, inferCategory, loadCategoryPrompt } f
 import { primitiveGeometrySchema, interpretPrimitives, PRIMITIVE_VERSION } from './primitives.js';
 import { normalizeSpatialPlan, spatialPlanSchema } from './spatialPlan.js';
 import { fallbackGeometry, geometryAudit, geometrySchema, legacyGeometrySchema, normalizeGeometry, seedFor, variationProfiles } from './geometry.js';
-import { buildProceduralGeometry, guessArchetype, proceduralGeometrySchema } from './archetypes/index.js';
+import { archetypes, buildProceduralGeometry, guessArchetype, proceduralGeometrySchema } from './archetypes/index.js';
+import { ALLOWED_ISSUES, normalizeReview, planCorrections, applyOneChange, keepCorrection, shouldStop } from './review/defects.js';
 import { geometrySystem, genericGeometrySystem, geometryUser, plannerSystem, plannerUser, reviewSystem } from './prompts.js';
 import { auditVariant, buildNativeVariant, buildPartsVariant, saveVariantToLibrary } from './assetStudio.js';
 import { captureThreeViews } from './capture.js';
@@ -35,7 +36,7 @@ const reviewSchema = {
     score: { type: 'number', minimum: 0, maximum: 10 },
     decision: { type: 'string', enum: ['accept','patch','rebuild'] },
     criteria: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['name','score','essential','comment'], properties: { name:{type:'string'}, score:{type:'number',minimum:0,maximum:10}, essential:{type:'boolean'}, comment:{type:'string'} } } },
-    problems: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['component','issue','severity'], properties: { component:{type:'string'}, issue:{type:'string'}, severity:{type:'string',enum:['low','medium','high','critical']} } } },
+    problems: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['component','issue','severity'], properties: { component:{type:'string'}, issue:{type:'string',enum:[...ALLOWED_ISSUES]}, severity:{type:'string',enum:['low','medium','high','critical']} } } },
     improvement: { type: 'string' },
   },
 };
@@ -323,6 +324,17 @@ async function makeGenericGeometry(job, variant){
 }
 
 async function makeGeometry(job, variant) {
+  if (variant.paramChange) {
+    const source = job.variants.find((entry) => entry.id === variant.correctionOf);
+    const definition = source?.geometryDefinition;
+    if (!definition?.params || !archetypes[definition.archetype]) throw new Error('Source paramétrique indisponible pour la correction.');
+    const params = applyOneChange(definition.params, variant.paramChange);
+    const procedural = buildProceduralGeometry({ ...definition, params }, job.plan, source.profile, seedFor(job.id + ':' + variant.id));
+    const geometry = normalizeGeometry(procedural, job.plan);
+    const audit = geometryAudit(geometry, job.plan);
+    if (!audit.passed) throw Object.assign(new Error('Correction paramétrique non conforme.'), { code: 'GEOMETRY_AUDIT_FAILED', details: audit.issues });
+    return { geometry, audit, definition: procedural.definition, generation: { provider: 'structured_review', model: null, fallback: false } };
+  }
   if(job.geometryStrategy === 'generic_primitives_v1'){
     const generic=await makeGenericGeometry(job,variant);
     if(generic)return generic;
@@ -521,7 +533,7 @@ async function runVariant(jobId, variantId) {
   await mutateJob(jobId, (item) => {
     const v=item.variants.find((x)=>x.id===variantId);
     delete v._captureData;
-    v.review=review; v.status='done'; v.finishedAt=new Date().toISOString();
+    v.review=review; v.defects=review ? normalizeReview(review).defects : []; v.status='done'; v.finishedAt=new Date().toISOString();
     event(item,'variant.done',review ? `Variante terminée · ${Number(review.score).toFixed(1)}/10` : 'Variante terminée · critique IA indisponible',{
       variantId, engineUsed: v.engineUsed, generationSource: v.generationSource || generationSourceForEngine(v.engineUsed),
     });
@@ -585,7 +597,8 @@ async function autoImprove(jobId) {
   for (let cycle = 0; cycle < 4; cycle += 1) {
     let job = await getJob(jobId);
     const current = job.variants.filter((variant) => variant.planVersion === job.planVersion);
-    const decision = qualityBatchDecision(job.variants, {
+    const eligible = job.variants.filter((variant) => !variant.correctionDecision || variant.correctionDecision.keep);
+    const decision = qualityBatchDecision(eligible, {
       planVersion: job.planVersion,
       policy: job.qualityPolicy,
       attemptsUsed: job.variants.filter((variant) => variant.review || ['done','failed'].includes(variant.status)).length,
@@ -593,18 +606,43 @@ async function autoImprove(jobId) {
       patchesUsed: current.filter((variant) => variant.correctionOf).length,
       patchable: true,
     });
-    const best = rankQualityVariant(current, job.qualityPolicy);
+    const best = rankQualityVariant(current.filter((variant) => !variant.correctionDecision || variant.correctionDecision.keep), job.qualityPolicy);
+    if (!best?.review) return;
+    const normalized = normalizeReview(best.review);
+    const history = job.reviewHistory?.length ? job.reviewHistory : [normalized];
+    const stopping = shouldStop(history, { acceptScore: job.qualityPolicy?.autoAcceptScore ?? 8 });
+    const archetypeId = job.plan?.archetype || null;
+    const parameterSchema = archetypeId ? archetypes[archetypeId]?.schema || null : null;
+    const planned = planCorrections(normalized.defects, archetypeId, parameterSchema);
+    const canChange = Boolean(best.geometryDefinition?.params && best.geometryDefinition.archetype === archetypeId && best.engineUsed !== 'native');
+    if (!canChange && planned.changes.length) {
+      planned.instructions.push(...planned.changes.map((change) => ({ issue: change.issue, component: 'asset' })));
+      planned.changes.length = 0;
+    }
     await mutateJob(jobId, (item) => {
       item.qualityDecision = decision;
+      item.reviewHistory ||= [normalized];
       event(item, 'quality.decision', decision.accepted ? 'Qualité automatique validée.' : 'Évaluation de la prochaine amélioration.', { cycle: cycle + 1, ...decision });
       return item;
     });
-    if (decision.accepted || decision.finished || !best?.review) return;
-    if (decision.needsCorrection) {
+    const record = async (details) => {
+      await mutateJob(jobId, (item) => {
+        event(item, 'review.defects', 'Revue structurée des défauts.', { variantId: best.id, defects: normalized.defects, ...details });
+        return item;
+      });
+      await traceEvent(jobId, 'review.defects', { variantId: best.id, defects: normalized.defects, ...details }, { variantId: best.id, phase: 'review', traceLevel: job.traceLevel });
+    };
+    if (stopping.stop || decision.accepted || decision.finished) {
+      await record({ changes: [], keepCorrection: null, stopReason: stopping.reason || (decision.accepted ? 'accepted' : 'limit') });
+      return;
+    }
+    if (planned.changes.length && decision.needsCorrection) {
+      const change = planned.changes[0];
       const variant = createVariant(job, job.variants.length, {
         correctionOf: best.id,
         profile: { id:'auto_patch', label:'Auto-correction', instruction:'Corrige précisément les problèmes mesurés par la critique visuelle, conserve les critères déjà bons et améliore la conformité.' },
         sourceReview: best.review,
+        paramChange: change,
       });
       await mutateJob(jobId, (item) => {
         item.variants.push(variant);
@@ -612,9 +650,26 @@ async function autoImprove(jobId) {
         return item;
       });
       await runVariant(jobId, variant.id);
+      const after = await getJob(jobId);
+      const result = after.variants.find((entry) => entry.id === variant.id);
+      const nextReview = result.review ? normalizeReview(result.review) : { score: 0, defects: [] };
+      const keep = result.review ? keepCorrection(normalized, nextReview) : { keep: false, reason: 'review_unavailable' };
+      const nextHistory = [...history, nextReview];
+      const stop = shouldStop(nextHistory, { acceptScore: job.qualityPolicy?.autoAcceptScore ?? 8 });
+      await mutateJob(jobId, (item) => {
+        item.variants.find((entry) => entry.id === variant.id).correctionDecision = keep;
+        item.reviewHistory = nextHistory;
+        return item;
+      });
+      await record({ changes: [change], correctedVariantId: variant.id, keepCorrection: keep, stopReason: stop.stop ? stop.reason : null });
+      if (stop.stop) return;
       continue;
     }
-    if (decision.needsRegenerate) {
+    if (planned.instructions.length) await mutateJob(jobId, (item) => {
+      for (const instruction of planned.instructions) item.feedback.push({ id:randomUUID(), at:new Date().toISOString(), source:'auto_review', mode:'rebuild', variantId:best.id, text:`Corrige : ${instruction.issue} sur ${instruction.component}` });
+      return item;
+    });
+    if (decision.needsRegenerate && !planned.instructions.length && !planned.rebuilds.length) {
       const profile = variationProfiles[(job.variants.length + 1) % variationProfiles.length];
       const variant = createVariant(job, job.variants.length, {
         convergenceOf: best.id,
@@ -627,10 +682,13 @@ async function autoImprove(jobId) {
         return item;
       });
       await runVariant(jobId, variant.id);
+      await record({ changes: [], keepCorrection: null, stopReason: null });
       continue;
     }
-    if (decision.needsRebuild) {
-      const problems = (best.review.problems || []).map((problem) => problem.component + ': ' + problem.issue).join('; ');
+    if ((planned.rebuilds.length || planned.instructions.length) &&
+        (job.autoRebuilds || 0) < (job.qualityPolicy?.maxRebuildsPerObject ?? 1) &&
+        !decision.attemptBudgetExhausted) {
+      const problems = planned.rebuilds.map((problem) => problem.component + ': ' + problem.issue).join('; ');
       await mutateJob(jobId, (item) => {
         item.autoRebuilds = (item.autoRebuilds || 0) + 1;
         item.feedback.push({ id:randomUUID(), at:new Date().toISOString(), source:'auto_review', mode:'rebuild', variantId:best.id, text:'Rebuild demandé par le contrôle qualité. ' + best.review.improvement + (problems ? ' Problèmes: ' + problems : '') });
@@ -649,8 +707,10 @@ async function autoImprove(jobId) {
       });
       job = await getJob(jobId);
       for (const variant of job.variants.filter((variant) => variant.planVersion === job.planVersion && !variant.correctionOf && variant.status !== 'done')) await runVariant(jobId, variant.id);
+      await record({ changes: [], rebuilds: planned.rebuilds, keepCorrection: null, stopReason: null });
       continue;
     }
+    await record({ changes: [], instructions: planned.instructions, keepCorrection: null, stopReason: 'limit' });
     return;
   }
 }
@@ -677,7 +737,8 @@ async function runJob(id) {
       return;
     }
     const candidates = job.variants.filter((x) => x.status === 'done');
-    const best = rankQualityVariant(candidates, job.qualityPolicy) || [...candidates].sort((a,b)=>(b.review?.score ?? -1)-(a.review?.score ?? -1))[0];
+    const retained = candidates.filter((x) => !x.correctionDecision || x.correctionDecision.keep);
+    const best = rankQualityVariant(retained, job.qualityPolicy) || [...retained].sort((a,b)=>(b.review?.score ?? -1)-(a.review?.score ?? -1))[0];
     await mutateJob(id, (item) => {
       item.status='review_ready'; item.error=null;
       item.bestVariantId=best?.id || null;

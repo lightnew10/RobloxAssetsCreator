@@ -22,6 +22,7 @@ Créer et améliorer des assets 3D Roblox indépendamment de MyRGame ; trois var
 - server/src/providers.js : appels à Ollama et fournisseurs externes.
 - server/src/capture.js : captures pour la critique.
 - server/src/qualityPolicy.js : acceptation et relances.
+- server/src/review/ : vocabulaire fermé, rôles paramétriques et décisions de correction.
 - server/src/trace.js : traces détaillées.
 - server/test/ : tests automatisés existants.
 

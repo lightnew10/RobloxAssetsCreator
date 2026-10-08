@@ -1,5 +1,7 @@
 # Tests manuels
 
+Avant les tests automatisés, lancer `npm install` à la racine, puis `npm test`.
+
 Voir aussi [Diagnostics IA locale](LOCAL_AI_DIAGNOSTICS.md) pour les requêtes Ollama longues et le fournisseur de planification dédié.
 
 ## Test 1 — Pipeline Parts recommandé

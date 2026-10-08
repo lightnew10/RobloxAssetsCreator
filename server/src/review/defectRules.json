@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "vocabulary": {
+    "shape": ["too_round", "not_round_enough", "too_straight", "too_bent", "wrong_proportion", "too_thin", "too_thick", "asymmetric_bad"],
+    "detail": ["too_few_details", "too_many_details", "visible_segment_seams", "details_below_min_size"],
+    "count": ["too_few_leaves", "too_many_leaves", "too_few_parts", "too_many_parts"],
+    "texture": ["texture_too_flat", "texture_too_noisy", "colors_too_similar", "colors_too_saturated"],
+    "component": ["missing_component", "misplaced_component", "floating_component", "overlap_bad"],
+    "silhouette": ["unreadable_silhouette", "variants_too_similar"]
+  },
+  "rules": {
+    "too_few_leaves":        { "action": "param", "role": "count",     "direction": "increase", "ratio": 0.15 },
+    "too_many_leaves":       { "action": "param", "role": "count",     "direction": "decrease", "ratio": 0.15 },
+    "too_few_parts":         { "action": "param", "role": "count",     "direction": "increase", "ratio": 0.15 },
+    "too_many_parts":        { "action": "param", "role": "count",     "direction": "decrease", "ratio": 0.15 },
+    "too_few_details":       { "action": "param", "role": "detail",    "direction": "increase", "ratio": 0.2 },
+    "too_many_details":      { "action": "param", "role": "detail",    "direction": "decrease", "ratio": 0.2 },
+    "visible_segment_seams": { "action": "param", "role": "detail",    "direction": "increase", "ratio": 0.2 },
+    "details_below_min_size":{ "action": "param", "role": "detail",    "direction": "decrease", "ratio": 0.15 },
+    "too_straight":          { "action": "param", "role": "curvature", "direction": "increase", "ratio": 0.2 },
+    "too_bent":              { "action": "param", "role": "curvature", "direction": "decrease", "ratio": 0.2 },
+    "too_thin":              { "action": "param", "role": "radius",    "direction": "increase", "ratio": 0.15 },
+    "too_thick":             { "action": "param", "role": "radius",    "direction": "decrease", "ratio": 0.15 },
+    "too_round":             { "action": "param", "role": "angularity", "direction": "increase", "ratio": 0.2 },
+    "not_round_enough":      { "action": "param", "role": "angularity", "direction": "decrease", "ratio": 0.2 },
+    "wrong_proportion":      { "action": "instruct" },
+    "asymmetric_bad":        { "action": "instruct" },
+    "texture_too_flat":      { "action": "instruct" },
+    "texture_too_noisy":     { "action": "instruct" },
+    "colors_too_similar":    { "action": "instruct" },
+    "colors_too_saturated":  { "action": "instruct" },
+    "unreadable_silhouette": { "action": "instruct" },
+    "variants_too_similar":  { "action": "instruct" },
+    "missing_component":     { "action": "rebuild" },
+    "misplaced_component":   { "action": "rebuild" },
+    "floating_component":    { "action": "rebuild" },
+    "overlap_bad":           { "action": "rebuild" }
+  }
+}

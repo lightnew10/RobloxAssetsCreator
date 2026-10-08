@@ -1,5 +1,7 @@
 # Roadmap après la refonte générique — 8 octobre 2026
 
+- [x] Revue par défauts branchée — à évaluer sur palmier et rocher dans Roblox Studio.
+
 - [x] Primitives génériques et tests unitaires ; ancien format Parts préservé.
 - [x] Schéma fermé pour inventaire des composants puis primitives.
 - [x] Huit gabarits de catégories en données.

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "archetypes": {
+    "palmTree": { "frondCount": "count", "segments": "detail", "curvature": "curvature", "baseRadius": "radius", "frondLength": "radius" },
+    "broadleaf": { "branchCount": "count", "segments": "detail", "curvature": "curvature", "baseRadius": "radius", "crownWidth": "radius" },
+    "rock": { "lumps": "detail", "roughness": "angularity" },
+    "house": { "roofSlope": "curvature" }
+  }
+}
