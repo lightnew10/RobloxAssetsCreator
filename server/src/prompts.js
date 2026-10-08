@@ -4,7 +4,7 @@ Contraintes absolues :
 - tous les composants ont un id stable et unique ;
 - parentId ne peut référencer qu'un id réellement présent ;
 - le conteneur Model Roblox est implicite et ne doit PAS être inventé dans components : ne crée jamais un parent fictif root_coconut_palm, root_tree ou root_asset ;
-- pour les composants directement dans l'asset (tronc principal, grandes masses), omets parentId au lieu d'écrire root ou root_* ;
+- pour les composants directement dans l'asset (tronc principal, grandes masses), omets totalement parentId ; n'écris jamais parentId: Model, Model Roblox, root ou root_* ;
 - les composants peuvent avoir plusieurs racines au niveau Model si nécessaire ;
 - aucun cycle de parent ;
 - dimensions en studs réalistes ;
