@@ -10,7 +10,17 @@ export const archetypeIds=Object.freeze(Object.keys(archetypes));
 
 // Used to constrain model output to a small fixed vocabulary. Actual per-archetype
 // ranges are revalidated by builders, so bad params cannot build arbitrary instances.
-const paramFields=Object.assign({},...Object.values(archetypes).map(entry=>entry.schema.properties));
+const paramFields={};
+for(const entry of Object.values(archetypes))for(const [field,schema] of Object.entries(entry.schema.properties)){
+  const previous=paramFields[field];
+  if(!previous){paramFields[field]=schema;continue;}
+  if(Array.isArray(previous.enum)&&Array.isArray(schema.enum)){
+    paramFields[field]={type:'string',enum:[...new Set([...previous.enum,...schema.enum])]};
+  }else if(['number','integer'].includes(schema.type) && schema.type===previous.type){
+    paramFields[field]={...previous,minimum:Math.min(previous.minimum,schema.minimum),
+      maximum:Math.max(previous.maximum,schema.maximum)};
+  }
+}
 export const proceduralGeometrySchema={
   type:'object', additionalProperties:false,required:['archetype','params','variation'],
   properties:{
