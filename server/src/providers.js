@@ -89,7 +89,7 @@ async function localChat({ runtime, messages, schema, images, traceContext = {},
     stream: true,
     // Qwen3.5 can otherwise spend an entire attempt in thinking mode.
     // Never put think inside options: Ollama expects it at the top level.
-    ...(typeof thinkOverride === 'boolean' ? { think: thinkOverride } : {}),
+    ...(typeof thinkOverride === 'boolean' ? { think: thinkOverride } : traceContext.phase === 'planning' ? { think: config.ollamaPlanningThink } : {}),
     format: schema || 'json',
     options: { temperature: 0.2, num_ctx: config.ollamaNumCtx },
   };
@@ -106,6 +106,11 @@ async function localChat({ runtime, messages, schema, images, traceContext = {},
   const maxTimer = setTimeout(() => { reason = 'max_duration'; controller.abort(); }, config.ollamaMaxDurationMs);
   let lastProgress = 0;
   resetIdle();
+  if (traceContext.runId) await traceEvent(traceContext.runId, 'OLLAMA_REQUEST_SETTINGS', {
+    model: runtime.textModel, think: body.think ?? null, temperature: body.options.temperature,
+    numCtx: body.options.num_ctx, schemaConstrained: typeof body.format === 'object',
+    maxThinkingOnlyMs: config.ollamaMaxThinkingOnlyMs,
+  }, traceContext);
   try {
     const response = await fetch(config.ollamaUrl.replace(/\/$/, '') + '/api/chat', {
       method: 'POST',
@@ -117,7 +122,7 @@ async function localChat({ runtime, messages, schema, images, traceContext = {},
       const detail = (await response.text()).slice(0, 1200);
       throw error('AI_HTTP_ERROR', 'Ollama HTTP ' + response.status + ': ' + detail, { status: response.status });
     }
-    return await parseOllamaChatStream(response, {
+    const streamed = await parseOllamaChatStream(response, {
       onActivity: resetIdle,
       onProgress: async (progress) => {
         if (traceContext.phase === 'planning' && progress.contentCharacters === 0 &&
@@ -138,6 +143,12 @@ async function localChat({ runtime, messages, schema, images, traceContext = {},
         }, traceContext);
       },
     });
+    if (traceContext.runId) await traceEvent(traceContext.runId, 'OLLAMA_STREAM_FINISHED', {
+      model: streamed.model, doneReason: streamed.raw?.done_reason || null,
+      contentCharacters: streamed.text.length, thinkingCharacters: streamed.raw?.thinkingCharacters || 0,
+      chunks: streamed.raw?.chunks || 0, usage: streamed.usage,
+    }, traceContext);
+    return streamed;
   } catch (cause) {
     if (controller.signal.aborted || cause?.name === 'AbortError') {
       if (reason === 'thinking_without_answer') {
@@ -222,10 +233,21 @@ async function callProvider({ provider, messages, schema, images = [], timeoutMs
     else if (provider === 'claude') response = await claudeChat({ runtime, messages, images, timeoutMs });
     else if (provider === 'gemini') response = await geminiChat({ runtime, messages, images, timeoutMs });
     else throw error('PROVIDER_UNSUPPORTED', 'Provider non supporté : ' + provider);
+    if (!String(response.text || '').trim()) {
+      throw error('AI_EMPTY_RESPONSE', 'Ollama a terminé sans réponse finale : aucun JSON dans content.', {
+        model: response.model, doneReason: response.raw?.done_reason || null,
+        thinkingCharacters: response.raw?.thinkingCharacters || 0, chunks: response.raw?.chunks || 0,
+        usage: response.usage || null,
+      });
+    }
     const data = validate(extractJson(response.text), schema);
     await traceProviderEvent({ kind: 'response', callId, provider, model: response.model, raw: response.raw, text: response.text, parsed: data, usage: response.usage, traceContext });
     return { data, meta: { provider, model: response.model, usage: response.usage } };
   } catch (cause) {
+    if (response) await traceProviderEvent({
+      kind: 'invalid_response', callId, provider, model: response.model || runtime.textModel,
+      raw: response.raw, text: response.text, usage: response.usage, traceContext,
+    });
     await traceProviderEvent({ kind: 'error', callId, provider, model: runtime.textModel, error: cause, traceContext });
     throw cause;
   }
