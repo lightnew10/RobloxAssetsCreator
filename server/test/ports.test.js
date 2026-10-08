@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
-import { checkLocalPort } from '../../scripts/check-ports.js';
+import { checkLocalPort, projectPorts } from '../../scripts/check-ports.js';
 
 test('detects an already occupied local port without terminating its owner', async () => {
   const owner = net.createServer();
@@ -24,4 +24,11 @@ test('allows an available port', async () => {
   await new Promise((resolve) => owner.close(resolve));
   const state = await checkLocalPort(port);
   assert.equal(state.free, true);
+});
+
+test('cleans the known API, Vite and former Vite fallback ports', () => {
+  assert.deepEqual(projectPorts(), [3001, 5173, 5174]);
+  assert.deepEqual(projectPorts('4000'), [3001, 5173, 5174, 4000]);
+  assert.deepEqual(projectPorts('5173'), [3001, 5173, 5174]);
+  assert.deepEqual(projectPorts('not-a-port'), [3001, 5173, 5174]);
 });
