@@ -104,6 +104,8 @@ Si une même erreur bloquante revient trois fois de suite :
 - l'incident doit apparaître dans FULL TRACE ;
 - si Telegram est configuré dans `server/.env`, une alerte est envoyée.
 
+Pour vérifier Telegram sans attendre une erreur : renseigner seulement le token dans `server/.env`, envoyer `/start` au bot dans un chat privé, lancer `npm run telegram:check`, puis démarrer l'API et vérifier le message « bot actif ». Si plusieurs chats ont envoyé `/start`, préciser `TELEGRAM_CHAT_ID`. Le statut horaire part une heure après le démarrage et chaque heure suivante ; le minuteur s'arrête avec l'API. Un job qui passe réellement à `failed` doit envoyer une seule alerte contenant son ID et son code, sans brief ni trace. Les tests automatisés utilisent une réponse Telegram simulée et ne vérifient pas la livraison réelle.
+
 ## Ce qu'il faut me renvoyer en cas de mauvais résultat
 
 Pour diagnostiquer précisément :
@@ -147,6 +149,10 @@ Rejouer le même cocotier avec **Auto**, puis vérifier `API ollama-native-diagn
 - Référence PNG : comparaison couleur spatiale expérimentale, sans modifier la note du modèle.
 
 ## Tests manuels requis dans Roblox Studio
+
+Avant de comparer les captures, générer deux jobs successifs dans la même place Studio. Vérifier que le second apparaît à distance des trois variantes du premier, et que chacune de ses trois captures montre uniquement sa propre variante. Répéter une fois en mode natif si le générateur Roblox est disponible.
+
+Pour le mode en série : lancer un job avec « Enchaîner les lots de 3 » et laisser le nombre de lots vide, attendre au moins deux lots, noter une variante terminée deux fois pendant la génération, vérifier les deux entrées de l'historique, puis cliquer « Arrêter ». Relancer avec 3 lots (puis, si possible, 5 ou 10) et vérifier le passage automatique en `review_ready` après exactement 9 variantes de base pour 3 lots, sans démarrage du quatrième. Vérifier que les variantes précédentes restent visibles dans le tableau et que seul « Choisir et sauvegarder » effectue une validation pour la bibliothèque. Tester un Patch et un Rebuild depuis une ligne du tableau et contrôler la filiation de la nouvelle variante.
 
 1. git pull origin main, puis redémarrer start.bat, autoriser Studio et sélectionner Sans IA Roblox.
 2. Générer trois cocotiers ; examiner courbure, palmes et noix et comparer les bounding boxes ; aucune requête native Roblox ne doit apparaître.

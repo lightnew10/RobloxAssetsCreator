@@ -30,6 +30,9 @@ test('Studio Luau builds submodels and positions pivot before returning bounds',
  assert.ok(code.includes('groups[key]'));
  assert.ok(code.includes('model.WorldPivot=CFrame.new('));
  assert.ok(code.indexOf('model.WorldPivot=CFrame.new(')<code.indexOf('return HttpService:JSONEncode({path=model:GetFullName()'));
+ assert.ok(code.includes('for _,assetFolder in ipairs(workspace:GetChildren()) do'));
+ assert.ok(code.includes('other:GetAttribute("RACJobId")'));
+ assert.ok(code.includes('local gap=math.max(350,wantedSize.Magnitude*2,size.Magnitude*2)'));
 });
 test('Ollama memory diagnostic records split VRAM/CPU and survives offline service',async()=>{
  const warnings=[];

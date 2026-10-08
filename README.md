@@ -35,6 +35,18 @@ Pré-requis : Node.js 20.19+, Roblox Studio récent, et sous Windows le serveur 
 
 Les données runtime, clés et traces restent locales dans `data/` et sont ignorées par Git.
 
+## Alertes Telegram
+
+Le serveur utilise le bot Telegram déjà créé : aucun processus supplémentaire n'est nécessaire. Dans `server/.env` (fichier local ignoré par Git), renseigner seulement :
+
+```dotenv
+TELEGRAM_BOT_TOKEN=token_fourni_par_BotFather
+```
+
+Envoyer `/start` au bot dans une conversation privée, puis lancer `npm run telegram:check` pour recevoir un message de test. Le serveur retrouve automatiquement cet unique chat et conserve son identifiant dans `data/runtime/telegram-chat.json` (ignoré par Git). Si `/start` est envoyé après le lancement de l'API, elle réessaie toutes les 30 secondes. Si plusieurs chats privés ont envoyé `/start`, indiquer explicitement `TELEGRAM_CHAT_ID` dans `server/.env` ; `npm run telegram:chat-id` peut afficher les identifiants possibles. `start.bat` (ou `npm run dev:server`) active les notifications : confirmation au démarrage, alerte lors d'un échec de job ou d'une erreur serveur, et statut toutes les heures tant que le serveur fonctionne. Le statut compte les jobs actifs, les variantes achevées et les jobs prêts ou en erreur pendant la dernière heure. Redémarrer le serveur après toute modification de `server/.env`.
+
+Le bot envoie uniquement des codes d'erreur et des identifiants de job, sans brief, image, trace complète ni clé. Si Telegram est indisponible, la génération continue et un avertissement apparaît dans le journal local. Le token donne accès au bot : ne pas le publier ni le coller dans une conversation.
+
 ## Pipeline
 
 `Brief → Plan 3D → Validation/repair → Variantes → Construction Studio → Audit technique → Captures → Critique IA → Correction → Review humaine → Sauvegarde`

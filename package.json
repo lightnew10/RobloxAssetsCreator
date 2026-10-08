@@ -10,6 +10,8 @@
     "dev:server": "npm run dev --workspace server",
     "dev:web": "npm run dev --workspace web",
     "start:server": "npm run start --workspace server",
+    "telegram:check": "npm run telegram:check --workspace server",
+    "telegram:chat-id": "npm run telegram:chat-id --workspace server",
     "build": "npm run build --workspace web",
     "test": "npm test --workspace server",
     "verify": "npm run test && npm run build && npm run eval:fixtures && npm run export:dataset",

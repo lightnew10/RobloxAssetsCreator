@@ -23,7 +23,9 @@ Créer et améliorer des assets 3D Roblox indépendamment de MyRGame ; trois var
 - server/src/capture.js : captures pour la critique.
 - server/src/qualityPolicy.js : acceptation et relances.
 - server/src/review/ : vocabulaire fermé, rôles paramétriques et décisions de correction.
+- Revue web : tableau des variantes, notes humaines révisables et historique ; lots de trois en série avec arrêt automatique après un nombre choisi de lots, ou jusqu'à arrêt humain.
 - server/src/trace.js : traces détaillées.
+- server/src/telegram.js : notifications optionnelles au démarrage, sur erreur et toutes les heures ; configuration dans `server/.env` décrite dans README.md.
 - server/test/ : tests automatisés existants.
 
 ## Limites repérées dans la version examinée

@@ -8,10 +8,17 @@ const modelName = (job, variant) => 'Asset_' + clean(job.name, 28) + '_V' + (var
 
 const placement = `local _,wantedSize=model:GetBoundingBox()
 local x=0
-for _,other in ipairs(folder:GetChildren()) do
-  if other:IsA("Model") and other~=model then
-    local ok,cf,size=pcall(function() return other:GetBoundingBox() end)
-    if ok then x=math.max(x,cf.Position.X+size.X/2+wantedSize.X/2+25) end
+for _,assetFolder in ipairs(workspace:GetChildren()) do
+  if assetFolder:IsA("Folder") and string.sub(assetFolder.Name,1,20)=="RobloxAssetsCreator_" then
+    for _,other in ipairs(assetFolder:GetChildren()) do
+      if other:IsA("Model") and other~=model and other:GetAttribute("RACJobId") then
+        local ok,cf,size=pcall(function() return other:GetBoundingBox() end)
+        if ok then
+          local gap=math.max(350,wantedSize.Magnitude*2,size.Magnitude*2)
+          x=math.max(x,cf.Position.X+size.X/2+wantedSize.X/2+gap)
+        end
+      end
+    end
   end
 end
 local cf,size=model:GetBoundingBox()

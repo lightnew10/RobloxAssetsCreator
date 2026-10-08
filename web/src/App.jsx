@@ -115,7 +115,7 @@ function StudioPanel({studio,onRefresh}) {
 }
 
 function CreatePanel({settings,studio,onCreated}) {
-  const [form,setForm]=useState({name:'',brief:'',category:'auto',subtype:'',style:'Roblox low-poly, formes simplifiées, arêtes franches',sizeStuds:[10,12,10],maxParts:180,previewDecomposition:false,provider:settings.selectedProvider,planningProvider:settings.selectedProvider,planningModel:'',visionProvider:settings.selectedVisionProvider,variantTarget:3});
+  const [form,setForm]=useState({name:'',brief:'',category:'auto',subtype:'',style:'Roblox low-poly, formes simplifiées, arêtes franches',sizeStuds:[10,12,10],maxParts:180,previewDecomposition:false,provider:settings.selectedProvider,planningProvider:settings.selectedProvider,planningModel:'',visionProvider:settings.selectedVisionProvider,variantTarget:3,continuousGeneration:true,batchTarget:''});
   const [images,setImages]=useState([]);
   const [error,setError]=useState('');
   useEffect(()=>setForm(f=>({...f,provider:settings.selectedProvider,visionProvider:settings.selectedVisionProvider})),[settings.selectedProvider,settings.selectedVisionProvider]);
@@ -152,7 +152,9 @@ function CreatePanel({settings,studio,onCreated}) {
         <label>Profondeur (studs)<input type="number" min="0.2" max="200" step="0.2" value={form.sizeStuds[2]} onChange={e=>setForm({...form,sizeStuds:[form.sizeStuds[0],form.sizeStuds[1],Number(e.target.value)]})}/></label>
         <label>Nombre de Parts maximal<input type="number" min="1" max="180" value={form.maxParts} onChange={e=>setForm({...form,maxParts:Number(e.target.value)})}/></label>
         <label className="preview-toggle"><input type="checkbox" checked={form.previewDecomposition} onChange={e=>setForm({...form,previewDecomposition:e.target.checked})}/> Examiner la décomposition avant construction</label>
-        <label>Variantes<select value={form.variantTarget} onChange={e=>setForm({...form,variantTarget:Number(e.target.value)})}>{[1,2,3,4,5,6].map(n=><option key={n}>{n}</option>)}</select></label>
+        <label>Variantes par lot<select disabled={form.continuousGeneration} value={form.variantTarget} onChange={e=>setForm({...form,variantTarget:Number(e.target.value)})}>{[1,2,3,4,5,6].map(n=><option key={n}>{n}</option>)}</select></label>
+        <label className="preview-toggle"><input type="checkbox" checked={form.continuousGeneration} onChange={e=>setForm({...form,continuousGeneration:e.target.checked,variantTarget:3})}/> Enchaîner les lots de 3 ; noter plus tard</label>
+        <label>Nombre de lots (3 variantes chacun)<input type="number" min="1" step="1" list="batch-targets" disabled={!form.continuousGeneration} value={form.batchTarget} onChange={e=>setForm({...form,batchTarget:e.target.value})} placeholder="Vide = jusqu’à Arrêter" /><datalist id="batch-targets"><option value="3"/><option value="5"/><option value="10"/></datalist></label>
       </div>
       <label>Brief complet<textarea rows="5" value={form.brief} onChange={e=>setForm({...form,brief:e.target.value})} placeholder="Décris un objet en une phrase, ou ajoute une photo sans texte. Tu peux aussi détailler les proportions et les couleurs..." /></label>
       <div className="reference-row">
@@ -205,6 +207,79 @@ function VariantCard({job,variant,onRefresh}) {
     {error&&<div className="error">{error}</div>}
     {job.selectedVariantId===variant.id&&<div className="saved">Sauvegardé : {job.savedAsset?.path}</div>}
   </article>;
+}
+
+const dateLabel = (value) => value ? new Date(value).toLocaleString('fr-FR') : '—';
+
+function ReviewRow({job,variant,onRefresh}) {
+  const [rating,setRating]=useState(variant.humanRating == null ? '' : String(variant.humanRating));
+  const [note,setNote]=useState('');
+  const [feedback,setFeedback]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState('');
+  useEffect(()=>setRating(variant.humanRating == null ? '' : String(variant.humanRating)),[variant.id,variant.humanRating]);
+  const act=async(url,body)=>{
+    setBusy(true);setError('');
+    try { await api(url,{method:'POST',body:JSON.stringify(body)}); await onRefresh(); }
+    catch (cause) { setError(cause.message); }
+    finally { setBusy(false); }
+  };
+  const saveRating=()=>act(`/api/jobs/${job.id}/variants/${variant.id}/rating`,{rating:Number(rating),note});
+  const correct=(mode)=>act(`/api/jobs/${job.id}/correct`,{variantId:variant.id,text:feedback,mode});
+  const canSave=['review_ready','stopped','failed'].includes(job.status);
+  const sourceVariant=(job.variants||[]).find(entry=>entry.id===variant.correctionOf);
+  const previousComponents=sourceVariant?.geometryDefinition?.primitives?.components||[];
+  const currentComponents=variant.geometryDefinition?.primitives?.components||[];
+  const changedComponents=sourceVariant ? currentComponents.filter(component=>{
+    const prior=previousComponents.find(entry=>entry.componentId===component.componentId);
+    return JSON.stringify(prior)!==JSON.stringify(component);
+  }).map(component=>component.componentId) : [];
+  const lineage=variant.correctionOf ? `Patch de ${variant.correctionOf.slice(0,8)}` : variant.rebuildOf ? `Rebuild de ${variant.rebuildOf.slice(0,8)}` : variant.convergenceOf ? `Nouvelle stratégie de ${variant.convergenceOf.slice(0,8)}` : 'Version initiale';
+  const change=variant.paramChange ? `${variant.paramChange.param} ${variant.paramChange.direction}` : variant.correctionOf ? 'Correction guidée' : variant.rebuildOf ? 'Nouveau plan' : '—';
+  const relatedFeedback=(job.feedback||[]).filter(entry=>entry.variantId===variant.id);
+  return <>
+    <tr className={job.bestVariantId===variant.id?'best-row':''}>
+      <th scope="row"><strong>V{variant.order+1}</strong><small>{job.name} · lot {variant.batchNumber||1} · plan v{variant.planVersion}</small><small>{variant.id.slice(0,8)} · {variant.status}</small></th>
+      <td>{dateLabel(variant.createdAt)}<small>Fin : {dateLabel(variant.finishedAt)}</small></td>
+      <td>{sourceName(variant)}<small>{variant.technicalAudit?.partCount!=null?`${variant.technicalAudit.partCount} Parts`:''}</small></td>
+      <td>{variant.review ? `${Number(variant.review.score).toFixed(1)}/10` : '—'}<small>{variant.review?.decision||''}</small></td>
+      <td><strong>{variant.humanRating==null?'—':`${variant.humanRating}/10`}</strong><small>{(variant.humanRatingHistory||[]).length} notation(s)</small></td>
+      <td><div className="review-thumbs">{(variant.captures||[]).map((capture,index)=><a key={capture.fileName} href={`/api/jobs/${job.id}/captures/${capture.fileName}`} target="_blank" rel="noreferrer" title={`Vue ${index+1}`}><img src={`/api/jobs/${job.id}/captures/${capture.fileName}`} alt={`V${variant.order+1} vue ${index+1}`}/></a>)}</div></td>
+      <td>{change}<small>{variant.correctionDecision ? (variant.correctionDecision.keep?'Conservée':'Écartée') : ''}</small></td>
+      <td>{lineage}</td>
+      <td><span>{job.selectedVariantId===variant.id?'Sauvegardée':''}</span></td>
+    </tr>
+    <tr className="review-details-row"><td colSpan="9"><details><summary>Notes, défauts, corrections et historique de V{variant.order+1}</summary>
+      <div className="review-row-details">
+        <div><strong>Proposition IA</strong><p>{variant.review?.improvement||'Aucune proposition disponible.'}</p><ul>{(variant.defects||variant.review?.problems||[]).map((defect,index)=><li key={index}>{defect.component} · {defect.issue} · {defect.severity}</li>)}</ul>
+          <p>Modification appliquée : {change}. {variant.correctionDecision?.reason||''}</p>
+          {changedComponents.length>0&&<p>Composants modifiés : {changedComponents.join(', ')}</p>}
+          <p>Audit : {variant.technicalAudit?.passed?'conforme':variant.technicalAudit?'échec':'indisponible'} · plan v{variant.planVersion} · {variant.geometryDefinition?.archetype||variant.geometryDefinition?.version||'géométrie native'}</p>
+          {(variant.review?.criteria||[]).map((criterion,index)=><p key={index}>{criterion.name} : {criterion.score}/10 · {criterion.comment}</p>)}
+          {relatedFeedback.map(entry=><p key={entry.id}>Feedback {entry.mode} : {entry.text}</p>)}
+        </div>
+        <div><strong>Mes notes</strong><ul>{(variant.humanRatingHistory||[]).map(entry=><li key={entry.id}>{dateLabel(entry.at)} : {entry.rating}/10 {entry.note&&`· ${entry.note}`}</li>)}</ul>
+          {variant.status==='done'&&<div className="review-edit"><label>Note /10<input type="number" min="0" max="10" step="0.1" disabled={job.selectedVariantId===variant.id&&job.status==='saved'} value={rating} onChange={e=>setRating(e.target.value)}/></label><label>Commentaire<input disabled={job.selectedVariantId===variant.id&&job.status==='saved'} value={note} maxLength={1000} onChange={e=>setNote(e.target.value)} placeholder="Ce qui fonctionne ou reste à corriger"/></label><button disabled={busy||rating===''||Number(rating)<0||Number(rating)>10||(job.selectedVariantId===variant.id&&job.status==='saved')} onClick={saveRating}>Enregistrer la note</button>
+          {canSave&&<button disabled={busy||variant.humanRating==null} onClick={()=>act(`/api/jobs/${job.id}/select`,{variantId:variant.id,userRating:variant.humanRating})}>Choisir et sauvegarder</button>}
+          {job.selectedVariantId===variant.id&&job.status==='saved'&&<small>Note figée lors de la sauvegarde pour préserver la bibliothèque validée.</small>}
+          <label>Correction demandée<input value={feedback} onChange={e=>setFeedback(e.target.value)} placeholder="Décris le changement"/></label><button disabled={busy||!feedback.trim()||Boolean(job.pendingCorrection)} onClick={()=>correct('patch')}>Patch</button><button disabled={busy||!feedback.trim()||Boolean(job.pendingCorrection)} onClick={()=>correct('rebuild')}>Rebuild</button></div>}
+          {error&&<p className="error">{error}</p>}
+        </div>
+      </div>
+    </details></td></tr>
+  </>;
+}
+
+function ReviewTable({job,jobs,onRefresh}) {
+  const [filter,setFilter]=useState('all');
+  const [visibleCount,setVisibleCount]=useState(50);
+  const entries=(jobs||[job]).flatMap(item=>(item.variants||[]).map(variant=>({job:item,variant})))
+    .filter(({variant})=>filter==='unrated' ? variant.status==='done'&&variant.humanRating==null : filter==='rated' ? variant.humanRating!=null : true)
+    .sort((a,b)=>String(b.variant.createdAt||'').localeCompare(String(a.variant.createdAt||'')));
+  return <section className="review-table-section"><div className="panel-head"><div><h3>Revue des variantes</h3><p>{entries.length} variante(s) affichables · revue possible pendant les lots suivants</p></div><label>Afficher <select value={filter} onChange={e=>{setFilter(e.target.value);setVisibleCount(50)}}><option value="all">Toutes</option><option value="unrated">À noter</option><option value="rated">Déjà notées</option></select></label></div>
+    <div className="review-table-scroll"><table className="review-table"><thead><tr><th>Variante</th><th>Créée / terminée</th><th>Moteur</th><th>IA</th><th>Ma note</th><th>Captures</th><th>Modification</th><th>Origine</th><th>Choix</th></tr></thead><tbody>{entries.slice(0,visibleCount).map(({job:entryJob,variant})=><ReviewRow key={variant.id} job={entryJob} variant={variant} onRefresh={onRefresh}/>)}</tbody></table></div>
+    {entries.length>visibleCount&&<button className="review-more" onClick={()=>setVisibleCount(count=>count+50)}>Afficher 50 variantes de plus</button>}
+  </section>;
 }
 
 function GenerationScoreSummary({job}) {
@@ -279,17 +354,18 @@ function JobDetail({job,onRefresh}) {
   return <section className="panel job-detail">
     <div className="panel-head"><div><span className="eyebrow">JOB {job.id.slice(0,8)}</span><h2>{job.name}</h2><p>{job.brief}</p></div><div className="job-state"><span className={'status '+(['failed','interrupted'].includes(job.status)?'offline':job.status==='saved'||job.status==='review_ready'?'online':'working')}>{statusLabel[job.status]||job.status}</span><button onClick={openTrace}>Trace</button>{['failed','interrupted','stopped'].includes(job.status)&&<button className="primary" disabled={actionBusy} onClick={resume}>Reprendre</button>}{['queued','understanding','planning','generating','awaiting_decomposition_review'].includes(job.status)&&<button disabled={actionBusy} onClick={stop}>Arrêter</button>}</div></div>
     {job.error&&<div className="error"><strong>{job.error.code}</strong> · {job.error.message}</div>}
+    {job.continuousGeneration&&<p className="continuous-banner">Génération en série · lot {job.activeBatchNumber||1}{job.batchTarget ? ` / ${job.batchTarget}` : ' / ∞'} · {job.completedBatchNumber||0} lot(s) prêts · {job.status==='review_ready' ? 'Nombre de lots atteint : toutes les variantes sont prêtes pour la revue.' : 'Les variantes terminées restent consultables et peuvent être notées pendant la génération.'}</p>}
     <GenerationScoreSummary job={job}/>
     <PlanView job={job}/>
     {job.status==='awaiting_decomposition_review'&&<DecompositionApproval job={job} onRefresh={onRefresh}/>}
-    <div className="variants">{(job.variants||[]).map(v=><VariantCard key={v.id} job={job} variant={v} onRefresh={onRefresh}/>)}</div>
+    <ReviewTable job={job} onRefresh={onRefresh}/>
     <div className="timeline"><h3>Activité</h3>{[...(job.events||[])].reverse().slice(0,40).map(e=><div key={e.id}><time>{new Date(e.at).toLocaleTimeString()}</time><strong>{e.type}</strong><span>{e.message}</span>{e.data && Object.keys(e.data).length > 0 && <details><summary>Détails techniques</summary><pre>{JSON.stringify(e.data,null,2).slice(0,12000)}</pre></details>}</div>)}</div>
     {traceOpen&&<div className="modal-backdrop"><div className="modal trace-modal"><div className="modal-head"><div><h2>FULL TRACE</h2><p>{trace.length} événements · {artifacts.length} artifacts</p></div><button onClick={()=>setTraceOpen(false)}>✕</button></div><div className="artifact-list">{artifacts.slice().reverse().map(a=><a key={a.id} href={'/api/jobs/'+job.id+'/trace/artifacts/'+a.id} target="_blank" rel="noreferrer"><strong>{a.category}</strong><span>{a.name}</span><small>{Math.round((a.size||0)/1024)} Ko</small></a>)}</div><pre>{trace.map(e=>JSON.stringify(e,null,2)).join('\n\n')}</pre></div></div>}
   </section>;
 }
 
 export default function App(){
-  const [health,setHealth]=useState(null),[stats,setStats]=useState(null),[settings,setSettings]=useState(null),[jobs,setJobs]=useState([]),[selectedId,setSelectedId]=useState(null),[settingsOpen,setSettingsOpen]=useState(false),[fatal,setFatal]=useState('');
+  const [health,setHealth]=useState(null),[stats,setStats]=useState(null),[settings,setSettings]=useState(null),[jobs,setJobs]=useState([]),[selectedId,setSelectedId]=useState(null),[showAllReviews,setShowAllReviews]=useState(false),[settingsOpen,setSettingsOpen]=useState(false),[fatal,setFatal]=useState('');
   const selected=useMemo(()=>jobs.find(j=>j.id===selectedId)||jobs[0]||null,[jobs,selectedId]);
   const refreshSettings=async()=>{const d=await api('/api/provider-settings');setSettings(d.settings)};
   const refresh=async()=>{
@@ -307,11 +383,11 @@ export default function App(){
       {fatal&&<div className="error global">{fatal}</div>}
       <div className="dashboard-grid">
         <StudioPanel studio={health?.studio} onRefresh={refresh}/>
-        <CreatePanel settings={settings} studio={health?.studio} onCreated={job=>{setSelectedId(job.id);refresh()}}/>
+        <CreatePanel settings={settings} studio={health?.studio} onCreated={job=>{setSelectedId(job.id);setShowAllReviews(false);refresh()}}/>
       </div>
       <LearningDashboard stats={stats}/>
-      <section className="jobs-strip"><div className="jobs-title"><h3>Créations</h3><span>{jobs.length} job(s)</span></div><div className="job-tabs">{jobs.map(j=><button key={j.id} className={selected?.id===j.id?'active':''} onClick={()=>setSelectedId(j.id)}><strong>{j.name}</strong><span>{statusLabel[j.status]||j.status}</span></button>)}</div></section>
-      {selected?<JobDetail job={selected} onRefresh={refresh}/>:<section className="empty"><h2>Aucun asset</h2><p>Connecte Studio, décris un asset et lance la première génération.</p></section>}
+      <section className="jobs-strip"><div className="jobs-title"><h3>Créations</h3><span>{jobs.length} job(s)</span></div><div className="job-tabs"><button className={showAllReviews?'active':''} onClick={()=>setShowAllReviews(true)}><strong>Toutes les revues</strong><span>Historique et notes</span></button>{jobs.map(j=><button key={j.id} className={!showAllReviews&&selected?.id===j.id?'active':''} onClick={()=>{setSelectedId(j.id);setShowAllReviews(false)}}><strong>{j.name}</strong><span>{statusLabel[j.status]||j.status}</span></button>)}</div></section>
+      {showAllReviews?<section className="panel job-detail"><ReviewTable jobs={jobs} onRefresh={refresh}/></section>:selected?<JobDetail job={selected} onRefresh={refresh}/>:<section className="empty"><h2>Aucun asset</h2><p>Connecte Studio, décris un asset et lance la première génération.</p></section>}
     </main>
     {settingsOpen&&<ProviderSettings settings={settings} onClose={()=>setSettingsOpen(false)} onReload={refreshSettings}/>}
   </div>

@@ -5,11 +5,12 @@ import { clearProviderKey, getProviderSettings, updateProviderSettings } from '.
 import { providerHealth, ollamaMemoryDiagnostic } from './providers.js';
 import { getStudioStatus, grantStudioAccess, listStudioTools, readStudioTree, revokeStudioAccess } from './studioBridge.js';
 import { closeStudioMcp } from './studioMcpClient.js';
-import { approveDecomposition, createAssetJob, queueStatus, reconcileInterruptedJobs, requestCorrection, resumeJob, selectAndSave, stopJob } from './pipeline.js';
+import { approveDecomposition, createAssetJob, queueStatus, rateVariant, reconcileInterruptedJobs, requestCorrection, resumeJob, selectAndSave, stopJob } from './pipeline.js';
 import { getJob, listJobs } from './store.js';
 import { capturePath } from './capture.js';
 import { readTrace, readTraceArtifacts, resolveTraceArtifact } from './trace.js';
 import { learningStats } from './stats.js';
+import { safeTelegramErrorCode, sendCriticalAlert, startTelegramMonitor } from './telegram.js';
 
 const app = express();
 function publicJob(job) {
@@ -71,6 +72,7 @@ app.get('/api/jobs/:jobId', async (req,res,next)=>{
 });
 app.post('/api/jobs/:jobId/decomposition',async(req,res,next)=>{try{res.status(202).json({ok:true,job:publicJob(await approveDecomposition(req.params.jobId,req.body||{}))});}catch(e){next(e);}});
 app.post('/api/jobs/:jobId/correct', async (req,res,next)=>{ try{res.status(202).json({ok:true,job:publicJob(await requestCorrection(req.params.jobId,req.body||{}))});}catch(e){next(e);} });
+app.post('/api/jobs/:jobId/variants/:variantId/rating', async (req,res,next)=>{ try{res.json({ok:true,job:publicJob(await rateVariant(req.params.jobId,req.params.variantId,req.body||{}))});}catch(e){next(e);} });
 app.post('/api/jobs/:jobId/select', async (req,res,next)=>{ try{res.json({ok:true,job:publicJob(await selectAndSave(req.params.jobId,req.body?.variantId,req.body?.userRating))});}catch(e){next(e);} });
 app.post('/api/jobs/:jobId/stop', async (req,res,next)=>{ try{res.json({ok:true,job:publicJob(await stopJob(req.params.jobId))});}catch(e){next(e);} });
 app.post('/api/jobs/:jobId/resume', async (req,res,next)=>{
@@ -99,15 +101,18 @@ app.get('/api/jobs/:jobId/captures/:fileName', async (req,res)=>{
 app.use((req,res)=>res.status(404).json({ok:false,error:{code:'ROUTE_NOT_FOUND',message:'Route introuvable.'}}));
 app.use((err,req,res,_next)=>{
   console.error('[RAC]',err);
-  const status = ['JOB_NOT_FOUND'].includes(err.code) ? 404 : ['JOB_INPUT_INVALID','PROVIDER_KEY_REQUIRED','STUDIO_ACCESS_REQUIRED','STUDIO_NOT_CONNECTED','FEEDBACK_REQUIRED','VARIANT_NOT_READY','JOB_NOT_REVIEWABLE'].includes(err.code) ? 409 : 500;
+  const status = ['JOB_NOT_FOUND'].includes(err.code) ? 404 : ['JOB_INPUT_INVALID','PROVIDER_KEY_REQUIRED','STUDIO_ACCESS_REQUIRED','STUDIO_NOT_CONNECTED','FEEDBACK_REQUIRED','VARIANT_NOT_READY','JOB_NOT_REVIEWABLE','HUMAN_RATING_INVALID','CORRECTION_PENDING','RATING_LOCKED'].includes(err.code) ? 409 : 500;
+  if (status >= 500) void sendCriticalAlert(`RobloxAssetsCreator — erreur serveur\nRoute : ${req.route?.path || 'inconnue'}\nCode : ${safeTelegramErrorCode(err.code || 'SERVER_ERROR')}\nConsulte le journal local pour les détails.`);
   res.status(status).json({ok:false,error:{code:err.code||'SERVER_ERROR',message:err.message||'Erreur serveur.',details:err.details||null}});
 });
 
+let stopTelegramMonitor = () => {};
 const server=app.listen(config.port,config.host,()=>{
   console.log(`RobloxAssetsCreator API http://${config.host}:${config.port}`);
+  stopTelegramMonitor = startTelegramMonitor({ listJobs, queueStatus });
   ollamaMemoryDiagnostic().catch(error=>console.warn('[RAC] Ollama diagnostics:',error.message));
-  reconcileInterruptedJobs().then((count)=>{if(count)console.log('[RAC] '+count+' job(s) marqué(s) interrompu(s) après redémarrage.');}).catch((error)=>console.error('[RAC] startup recovery',error));
+  reconcileInterruptedJobs().then((count)=>{if(count)console.log('[RAC] '+count+' job(s) marqué(s) interrompu(s) après redémarrage.');}).catch((error)=>{console.error('[RAC] startup recovery',error);void sendCriticalAlert(`RobloxAssetsCreator — erreur au démarrage\nCode : ${safeTelegramErrorCode(error.code || 'STARTUP_RECOVERY_FAILED')}\nConsulte le journal local pour les détails.`);});
 });
-function shutdown(){ closeStudioMcp(); server.close(()=>process.exit(0)); setTimeout(()=>process.exit(1),4000).unref(); }
+function shutdown(){ stopTelegramMonitor(); closeStudioMcp(); server.close(()=>process.exit(0)); setTimeout(()=>process.exit(1),4000).unref(); }
 process.on('SIGINT',shutdown);
 process.on('SIGTERM',shutdown);

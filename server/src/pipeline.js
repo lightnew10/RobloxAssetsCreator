@@ -16,7 +16,7 @@ import { captureThreeViews } from './capture.js';
 import { getStudioStatus, listStudioTools } from './studioBridge.js';
 import { getJob, listJobs, mutateJob, saveJob } from './store.js';
 import { markRecovered, recordIncident, traceIncident } from './recovery.js';
-import { sendCriticalAlert } from './telegram.js';
+import { safeTelegramErrorCode, sendCriticalAlert } from './telegram.js';
 import { traceArtifact, traceEvent } from './trace.js';
 import { learnFromSelection, relevantLessons, relevantExamples } from './learning.js';
 import { saveLibrarySelection, searchLibrary } from './library.js';
@@ -64,6 +64,13 @@ function publicReferenceImages(job) {
 function providerFor(job) { return job.provider || getProviderRuntime().provider; }
 function visionProviderFor(job) { return job.visionProvider || getVisionRuntime().provider; }
 
+export function normalizeBatchTarget(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 1) throw Object.assign(new Error('Le nombre de lots doit être un entier positif.'), { code: 'JOB_INPUT_INVALID' });
+  return number;
+}
+
 export async function createAssetJob(input = {}) {
   const {name,brief,referenceImages:incomingImages}=normalizeAssetInput(input);
   const status = await getStudioStatus({ refresh: true });
@@ -82,7 +89,8 @@ export async function createAssetJob(input = {}) {
   const generationMode = getGenerationMode();
   const engine = engineForGenerationMode(generationMode);
   const id = randomUUID();
-  const target = Math.max(1, Math.min(config.maxVariants, Number(input.variantTarget) || 3));
+  const target = input.continuousGeneration === true ? 3 : Math.max(1, Math.min(config.maxVariants, Number(input.variantTarget) || 3));
+  const batchTarget = input.continuousGeneration === true ? normalizeBatchTarget(input.batchTarget) : null;
   const requestedSizeStuds=Array.isArray(input.sizeStuds) && input.sizeStuds.length===3 &&
     input.sizeStuds.every(v=>Number.isFinite(Number(v))&&Number(v)>=.2&&Number(v)<=200)
     ? input.sizeStuds.map(Number) : null;
@@ -96,7 +104,8 @@ export async function createAssetJob(input = {}) {
     generationMode, engine, geometryStrategy: 'generic_primitives_v1',
     requestedSizeStuds,maxParts,
     previewDecomposition:input.previewDecomposition===true,planApproved:input.previewDecomposition!==true,
-    variantTarget: target, traceLevel: input.traceLevel === 'off' ? 'off' : 'full',
+    variantTarget: target, continuousGeneration: input.continuousGeneration === true, batchTarget, activeBatchNumber: 1,
+    traceLevel: input.traceLevel === 'off' ? 'off' : 'full',
     qualityPolicy: { initialVariants: target, autoAcceptScore: 8, essentialAcceptMinScore: 8, humanReviewMinScore: 5, essentialReviewMinScore: 5, maxPatchesPerCandidate: 2, maxRebuildsPerObject: 1, maxAttemptsPerObject: 9 },
     autoRebuilds: 0,
     referenceImages: incomingImages,
@@ -106,7 +115,7 @@ export async function createAssetJob(input = {}) {
   };
   event(job, 'job.created', 'Job de création créé.', {
     provider, planningProvider, planningModel: planningModel || null, visionProvider,
-    generationMode, engine, variantTarget: target,
+    generationMode, engine, variantTarget: target, batchTarget,
   });
   await saveJob(job);
   await traceArtifact(id, 'inputs', 'job_request', { ...job, referenceImages: job.referenceImages.map((x) => ({ dataUrlBytes: x.length })) }, { phase: 'input' });
@@ -160,7 +169,6 @@ async function withRecovery(jobId, stage, variantId, fn) {
       previousIncident = incident;
       await traceIncident(snapshot, incident);
       if (incident.circuitBreaker) {
-        await sendCriticalAlert(`RobloxAssetsCreator STOP\nJob: ${snapshot.name}\nStage: ${stage}\nErreur: ${cause.code || 'PIPELINE_ERROR'}\n${cause.message}`);
         throw Object.assign(new Error('Arrêt après 3 erreurs identiques : ' + cause.message), { code: 'PIPELINE_CIRCUIT_BREAKER', details: incident });
       }
     }
@@ -259,7 +267,6 @@ async function buildPlan(job, referenceAnalysis) {
       // Stop after a genuine Ollama timeout and let the user choose another planning model
       // or increase the configured limits; leave normal retries for schema/structure failures.
       if (cause.code === 'AI_TIMEOUT' || lastIncident.circuitBreaker || attempt === config.maxPlanAttempts - 1) {
-        await sendCriticalAlert(`RobloxAssetsCreator : plan 3D bloqué\n${job.name}\n${cause.message}`);
         throw cause;
       }
     }
@@ -548,7 +555,8 @@ async function runVariant(jobId, variantId) {
 function createVariant(job, order, extra = {}) {
   const profile = variationProfiles[order % variationProfiles.length];
   return {
-    id: randomUUID(), order, profile, planVersion: job.planVersion, status: 'pending',
+    id: randomUUID(), order, profile, planVersion: job.planVersion, batchNumber: job.activeBatchNumber || 1,
+    rebuildOf: job.rebuildSourceVariantId || null, status: 'pending',
     geometry: null, bounds: null, technicalAudit: null, captures: [], review: null, engineUsed: null, generationSource: null,
     createdAt: new Date().toISOString(), ...extra,
   };
@@ -571,7 +579,7 @@ async function runFull(job) {
   if (current.length < job.variantTarget) {
     await mutateJob(job.id, (item) => {
       const existing = item.variants.filter((x) => x.planVersion === item.planVersion && !x.correctionOf).length;
-      for (let i = existing; i < item.variantTarget; i += 1) item.variants.push(createVariant(item, i));
+      for (let i = existing; i < item.variantTarget; i += 1) item.variants.push(createVariant(item, item.variants.length));
       item.status = 'generating';
       return item;
     });
@@ -691,6 +699,7 @@ async function autoImprove(jobId) {
       const problems = planned.rebuilds.map((problem) => problem.component + ': ' + problem.issue).join('; ');
       await mutateJob(jobId, (item) => {
         item.autoRebuilds = (item.autoRebuilds || 0) + 1;
+        item.rebuildSourceVariantId = best.id;
         item.feedback.push({ id:randomUUID(), at:new Date().toISOString(), source:'auto_review', mode:'rebuild', variantId:best.id, text:'Rebuild demandé par le contrôle qualité. ' + best.review.improvement + (problems ? ' Problèmes: ' + problems : '') });
         item.plan = null;
         item.status = 'planning';
@@ -715,15 +724,98 @@ async function autoImprove(jobId) {
   }
 }
 
+export function nextContinuousBatch(job) {
+  if (job.stopRequested) return null;
+  const batchNumber = job.activeBatchNumber || 1;
+  const variants = (job.variants || []).filter((variant) => (variant.batchNumber || 1) === batchNumber && !variant.correctionOf);
+  if (variants.length < 3 || variants.some((variant) => variant.status !== 'done')) return null;
+  return { batchNumber, nextBatchNumber: batchNumber + 1, variantIds: variants.map((variant) => variant.id) };
+}
+
+export function continuousBatchTargetReached(job) {
+  return Number.isSafeInteger(job.batchTarget) && job.batchTarget > 0 && (job.completedBatchNumber || 0) >= job.batchTarget;
+}
+
+async function runContinuous(jobId) {
+    let job = await getJob(jobId);
+    if (job.stopRequested) {
+      await mutateJob(jobId, (item) => { item.status = 'stopped'; event(item, 'job.stopped', 'Génération en série arrêtée.'); return item; });
+      return;
+    }
+    const state = nextContinuousBatch(job);
+    if (!state) throw Object.assign(new Error('Le lot courant est incomplet.'), { code: 'CONTINUOUS_BATCH_INCOMPLETE' });
+    const batch = state.batchNumber;
+    if ((job.completedBatchNumber || 0) < batch) {
+      await mutateJob(jobId, (item) => {
+        item.completedBatchNumber = batch;
+        event(item, 'batch.ready', 'Lot de variantes prêt pour la revue.', { batchNumber: batch, variantIds: state.variantIds });
+        return item;
+      });
+    }
+    job = await getJob(jobId);
+    if (job.pendingCorrection) {
+      const correction = job.pendingCorrection;
+      if (correction.mode === 'patch') {
+        await runPatch(job, correction);
+      } else {
+        await mutateJob(jobId, (item) => { item.plan = null; item.pendingCorrection = null; item.status = 'queued'; item.activeBatchNumber = batch + 1; item.rebuildSourceVariantId = correction.variantId || null; event(item, 'correction.rebuild_started', 'Reconstruction du plan demandée.'); return item; });
+        job = await getJob(jobId);
+        await runFull(job);
+        if ((await getJob(jobId)).status === 'awaiting_decomposition_review') return;
+      }
+      if (!queue.includes(jobId)) queue.push(jobId);
+      return;
+    }
+    if (continuousBatchTargetReached(job)) {
+      await mutateJob(jobId, (item) => {
+        item.status = 'review_ready';
+        const candidates = item.variants.filter((variant) => variant.status === 'done' && (!variant.correctionDecision || variant.correctionDecision.keep));
+        const best = rankQualityVariant(candidates, item.qualityPolicy) || [...candidates].sort((a,b)=>(b.review?.score ?? -1)-(a.review?.score ?? -1))[0];
+        item.bestVariantId = best?.id || null;
+        event(item, 'batch.target_reached', 'Nombre de lots demandé terminé. Variantes prêtes pour la revue.', { completedBatchNumber: item.completedBatchNumber, batchTarget: item.batchTarget });
+        return item;
+      });
+      return;
+    }
+    const nextBatch = state.nextBatchNumber;
+    const created = await mutateJob(jobId, (item) => {
+      if (item.stopRequested) return item;
+      item.activeBatchNumber = nextBatch;
+      item.status = 'generating';
+      for (let index = 0; index < 3; index += 1) item.variants.push(createVariant(item, item.variants.length));
+      event(item, 'batch.started', 'Nouveau lot de trois variantes.', { batchNumber: nextBatch });
+      return item;
+    });
+    if (created.stopRequested) {
+      await mutateJob(jobId, (item) => { item.status = 'stopped'; return item; });
+      return;
+    }
+    for (const variant of created.variants.filter((entry) => entry.batchNumber === nextBatch)) {
+      if ((await getJob(jobId)).stopRequested) break;
+      await runVariant(jobId, variant.id);
+    }
+    if ((await getJob(jobId)).stopRequested) {
+      await mutateJob(jobId, (item) => { item.status = 'stopped'; event(item, 'job.stopped', 'Génération en série arrêtée.'); return item; });
+      return;
+    }
+    if (!queue.includes(jobId)) queue.push(jobId);
+}
+
 async function runJob(id) {
   let job = await getJob(id);
   if (!job || job.stopRequested || ['review_ready','saved','stopped'].includes(job.status)) return;
   try {
     await traceEvent(id, 'JOB_STARTED', { name: job.name, provider: job.provider, generationMode: generationModeForJob(job), engine: engineForJob(job) }, { phase: 'job' });
+    if (job.continuousGeneration) {
+      await runFull(job);
+      if ((await getJob(id)).status === 'awaiting_decomposition_review') return;
+      await runContinuous(id);
+      return;
+    }
     if (job.pendingCorrection?.mode === 'patch') await runPatch(job, job.pendingCorrection);
     else {
       if (job.pendingCorrection?.mode === 'rebuild') {
-        await mutateJob(id, (item) => { item.plan=null; item.pendingCorrection=null; item.status='queued'; event(item,'correction.rebuild_started','Reconstruction du plan demandée.'); return item; });
+        await mutateJob(id, (item) => { item.plan=null; item.rebuildSourceVariantId=item.pendingCorrection?.variantId||null; item.pendingCorrection=null; item.status='queued'; event(item,'correction.rebuild_started','Reconstruction du plan demandée.'); return item; });
         job = await getJob(id);
       }
       await runFull(job);
@@ -748,6 +840,7 @@ async function runJob(id) {
     await traceEvent(id, 'JOB_REVIEW_READY', { bestVariantId: best?.id || null, bestScore: best?.review?.score ?? null }, { phase: 'job' });
   } catch (cause) {
     await mutateJob(id, (item) => { item.status='failed'; item.error={code:cause.code||'PIPELINE_FAILED',message:cause.message,details:cause.details||null}; event(item,'job.failed',cause.message,{code:cause.code}); return item; }).catch(()=>{});
+    await sendCriticalAlert(`RobloxAssetsCreator — erreur de génération\nJob : ${id}\nCode : ${safeTelegramErrorCode(cause.code || 'PIPELINE_FAILED')}\nConsulte la trace locale pour les détails.`);
     await traceArtifact(id, 'errors', 'pipeline_failure', { code:cause.code, message:cause.message, details:cause.details, stack:cause.stack }, { phase:'job' });
   }
 }
@@ -757,15 +850,39 @@ export async function requestCorrection(jobId, input = {}) {
   if (!text) throw Object.assign(new Error('Feedback requis.'), { code:'FEEDBACK_REQUIRED' });
   const mode = input.mode === 'rebuild' ? 'rebuild' : 'patch';
   const job = await mutateJob(jobId, (item) => {
-    if (!['review_ready','failed'].includes(item.status)) throw Object.assign(new Error('Attends la fin de la génération avant de corriger.'), { code:'JOB_NOT_REVIEWABLE' });
+    if (!['review_ready','failed','stopped'].includes(item.status) && !(item.continuousGeneration && item.status === 'generating'))
+      throw Object.assign(new Error('Attends une variante terminée avant de corriger.'), { code:'JOB_NOT_REVIEWABLE' });
+    if (item.pendingCorrection) throw Object.assign(new Error('Une correction est déjà en attente.'), { code:'CORRECTION_PENDING' });
+    if (input.variantId && !item.variants.some((variant) => variant.id === input.variantId && variant.status === 'done'))
+      throw Object.assign(new Error('Variante introuvable ou non terminée.'), { code:'VARIANT_NOT_READY' });
     item.feedback.push({ id:randomUUID(), at:new Date().toISOString(), text, mode, variantId:input.variantId||null });
     item.pendingCorrection={ mode, text, variantId:input.variantId||null };
-    item.status='queued'; item.error=null; item.stopRequested=false;
+    if (item.status !== 'generating') item.status='queued';
+    item.error=null; item.stopRequested=false;
     event(item,'feedback.received',text,{mode,variantId:input.variantId||null});
     return item;
   });
   schedule(jobId);
   return job;
+}
+
+export async function rateVariant(jobId, variantId, input = {}) {
+  const rating = Number(input.rating);
+  if (input.rating === '' || input.rating == null || !Number.isFinite(rating) || rating < 0 || rating > 10)
+    throw Object.assign(new Error('Note humaine invalide (0 à 10).'), { code: 'HUMAN_RATING_INVALID' });
+  const note = bounded(input.note, 1000);
+  return mutateJob(jobId, (item) => {
+    const variant = item.variants.find((entry) => entry.id === variantId && entry.status === 'done');
+    if (!variant) throw Object.assign(new Error('Variante introuvable ou non terminée.'), { code: 'VARIANT_NOT_READY' });
+    if (item.selectedVariantId === variantId && item.status === 'saved')
+      throw Object.assign(new Error('La note de cette variante sauvegardée est figée dans la bibliothèque.'), { code: 'RATING_LOCKED' });
+    const entry = { id: randomUUID(), at: new Date().toISOString(), rating, note };
+    variant.humanRating = rating;
+    variant.humanRatingHistory ||= [];
+    variant.humanRatingHistory.push(entry);
+    event(item, 'variant.rated', 'Note humaine enregistrée.', { variantId, rating, note, ratingId: entry.id });
+    return item;
+  });
 }
 
 export async function approveDecomposition(jobId,input={}) {
@@ -809,7 +926,15 @@ export async function selectAndSave(jobId, variantId, userRating = null) {
   },{phase:'learning',variantId});
   await traceArtifact(job.id, 'learning', 'validated_lessons', lessons, { phase: 'learning', variantId });
   job = await mutateJob(jobId, (item) => { item.selectedVariantId=variantId; item.savedAsset=saved; item.status='saved'; item.validatedLessons=lessons; item.humanRating=rating;
-    const selected=item.variants.find(x=>x.id===variantId); if(selected)selected.humanRating=rating; event(item,'variant.saved','Asset copié dans ServerStorage/RobloxAssetsCreator_Assets.',{variantId,path:saved?.path,lessons:lessons.length,libraryAccepted:Boolean(libraryExample),humanRating:rating}); return item; });
+    const selected=item.variants.find(x=>x.id===variantId);
+    if(selected) {
+      if (rating !== null && selected.humanRating !== rating) {
+        selected.humanRatingHistory ||= [];
+        selected.humanRatingHistory.push({ id:randomUUID(), at:new Date().toISOString(), rating, note:'Note lors de la sauvegarde.' });
+      }
+      selected.humanRating=rating;
+    }
+    event(item,'variant.saved','Asset copié dans ServerStorage/RobloxAssetsCreator_Assets.',{variantId,path:saved?.path,lessons:lessons.length,libraryAccepted:Boolean(libraryExample),humanRating:rating}); return item; });
   return job;
 }
 
