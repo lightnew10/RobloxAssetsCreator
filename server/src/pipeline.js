@@ -266,12 +266,14 @@ async function buildPlan(job, referenceAnalysis) {
 async function makeGenericGeometry(job, variant){
   const seed=seedFor([job.brief,job.category,variant.profile.id,PRIMITIVE_VERSION].join(':'));
   let lastError=null;
+  const source=variant.correctionOf ? job.variants.find(x=>x.id===variant.correctionOf) : null;
+  const partial=Boolean(source?.geometryDefinition?.primitives&&source?.geometry?.parts?.length);
   for(let attempt=0;attempt<config.maxGeometryAttempts;attempt+=1){
     try{
       const response=await structuredChat({
         provider:providerFor(job),
         messages:[
-          {role:'system',content:genericGeometrySystem},
+          {role:'system',content:genericGeometrySystem + (partial ? '\\nCORRECTION CIBLÉE : produis uniquement les composants modifiés. Les autres composants seront conservés bit pour bit.':'')},
           {role:'user',content:geometryUser({
             plan:job.plan,profile:variant.profile,
             examples:(job.memoryExamples||[]).filter(x=>x.decomposition),
@@ -283,21 +285,27 @@ async function makeGenericGeometry(job, variant){
         traceContext:{runId:job.id,variantId:variant.id,phase:'geometry',attempt:attempt+1,traceLevel:job.traceLevel},
       });
       const built=interpretPrimitives(response.data,job.plan,{
-        profile:variant.profile.id,maxParts:job.maxParts||180,minDetail:.2,seed
+        profile:variant.profile.id,maxParts:job.maxParts||180,minDetail:.2,seed,allowPartial:partial
       });
-      const geometry=normalizeGeometry(built,job.plan);
+      const changedIds=new Set(response.data.components.map(x=>x.componentId));
+      const combined=partial ? [...source.geometry.parts.filter(p=>!changedIds.has(p.componentId)),...built.parts] : built.parts;
+      if(combined.length>(job.maxParts||180))
+        throw Object.assign(new Error('Correction dépasse le plafond de pièces.'),{code:'TOO_MANY_PARTS',details:{count:combined.length}});
+      const geometry=normalizeGeometry({parts:combined},job.plan);
       const audit=geometryAudit(geometry,job.plan);
       if(!audit.passed)throw Object.assign(new Error('Audit primitives : '+audit.issues.map(x=>x.code).join(', ')),
         {code:'GEOMETRY_AUDIT_FAILED',details:audit.issues});
+      const finalDefinition=partial ? {components:[...source.geometryDefinition.primitives.components.filter(x=>!changedIds.has(x.componentId)),...response.data.components]} : response.data;
+      if(partial)await traceEvent(job.id,'TARGETED_PRIMITIVE_PATCH',{changedComponents:[...changedIds],retainedParts:source.geometry.parts.length-combined.length+built.parts.length},{variantId:variant.id,phase:'geometry'});
       await traceArtifact(job.id,'plans','primitive_decomposition_'+variant.id,{
-        schemaVersion:2,interpreterVersion:PRIMITIVE_VERSION,decomposition:response.data,warnings:built.warnings,
+        schemaVersion:2,interpreterVersion:PRIMITIVE_VERSION,decomposition:finalDefinition,warnings:built.warnings,
       },{variantId:variant.id,phase:'geometry'});
       await traceEvent(job.id,'PRIMITIVE_GEOMETRY_BUILT',{
         interpreterVersion:PRIMITIVE_VERSION,partCount:geometry.parts.length,
         warnings:built.warnings,seed,category:job.plan.category
       },{variantId:variant.id,phase:'geometry'});
       return {geometry,audit,definition:{
-        archetype:null,primitives:response.data,version:PRIMITIVE_VERSION,variation:variant.profile.id,
+        archetype:null,primitives:finalDefinition,version:PRIMITIVE_VERSION,variation:variant.profile.id,
       },generation:{provider:response.meta.provider,model:response.meta.model,fallback:false}};
     }catch(cause){
       lastError=cause;
