@@ -3,10 +3,12 @@ import { config } from './config.js';
 import { getGenerationMode, getProviderRuntime, getVisionRuntime } from './providerSettings.js';
 import { engineForGenerationMode, engineForJob, generationModeForJob, generationSourceForEngine } from './generationMode.js';
 import { structuredChat, visionStructuredChat } from './providers.js';
+import { inventorySchema, resolveCategory, inferCategory, loadCategoryPrompt } from './categories.js';
+import { primitiveGeometrySchema, interpretPrimitives, PRIMITIVE_VERSION } from './primitives.js';
 import { normalizeSpatialPlan, spatialPlanSchema } from './spatialPlan.js';
 import { fallbackGeometry, geometryAudit, geometrySchema, legacyGeometrySchema, normalizeGeometry, seedFor, variationProfiles } from './geometry.js';
 import { buildProceduralGeometry, guessArchetype, proceduralGeometrySchema } from './archetypes/index.js';
-import { geometrySystem, geometryUser, plannerSystem, plannerUser, reviewSystem } from './prompts.js';
+import { geometrySystem, genericGeometrySystem, geometryUser, plannerSystem, plannerUser, reviewSystem } from './prompts.js';
 import { auditVariant, buildNativeVariant, buildPartsVariant, saveVariantToLibrary } from './assetStudio.js';
 import { captureThreeViews } from './capture.js';
 import { getStudioStatus, listStudioTools } from './studioBridge.js';
@@ -82,9 +84,9 @@ export async function createAssetJob(input = {}) {
   const memoryLessons = await relevantLessons({ name, category: input.category || 'prop', subtype: input.subtype || '' });
   const memoryExamples = await relevantExamples({ name, brief, category: input.category || 'prop', subtype: input.subtype || '' });
   const job = {
-    schemaVersion: 1, id, name, brief, category: bounded(input.category || 'prop', 80), subtype: bounded(input.subtype, 80),
+    schemaVersion: 2, id, name, brief, category: bounded(input.category || 'prop', 80), subtype: bounded(input.subtype, 80),
     style: bounded(input.style || 'stylized Roblox', 300), studioId, provider, visionProvider, planningProvider, planningModel,
-    generationMode, engine,
+    generationMode, engine, geometryStrategy: 'generic_primitives_v1',
     variantTarget: target, traceLevel: input.traceLevel === 'off' ? 'off' : 'full',
     qualityPolicy: { initialVariants: target, autoAcceptScore: 8, essentialAcceptMinScore: 8, humanReviewMinScore: 5, essentialReviewMinScore: 5, maxPatchesPerCandidate: 2, maxRebuildsPerObject: 1, maxAttemptsPerObject: 9 },
     autoRebuilds: 0,
@@ -184,6 +186,9 @@ async function buildPlan(job, referenceAnalysis) {
   let lastIncident = null;
   let lastPlannerError = null;
   await mutateJob(job.id, (item) => { item.status = 'planning'; event(item, 'plan.started', 'Création du plan 3D.'); return item; });
+  const isGeneric = job.geometryStrategy === 'generic_primitives_v1';
+  const categoryHint = inferCategory(job);
+  const categoryTemplate = isGeneric ? await loadCategoryPrompt(categoryHint) : '';
   for (let attempt = 0; attempt < config.maxPlanAttempts; attempt += 1) {
     try {
       const response = await structuredChat({
@@ -192,15 +197,19 @@ async function buildPlan(job, referenceAnalysis) {
         // JSON planning is deterministic: do not burn long reasoning before answering.
         thinkOverride: (job.planningProvider || providerFor(job)) === 'local' ? config.ollamaPlanningThink : null,
         messages: [
-          { role: 'system', content: plannerSystem },
+          { role: 'system', content: plannerSystem + (isGeneric ? '\\nMODE: INVOICE COMPONENTS ONLY, NO LOW-LEVEL PARTS. Use category from enum. Keep JSON below 1500 output tokens.\\nCATEGORY_TEMPLATE: '+categoryTemplate : '') },
           { role: 'user', content: plannerUser({ brief: job.brief, category: job.category, subtype: job.subtype, style: job.style, feedback: [...(job.memoryLessons || []).map((x) => ({ source: 'validated_memory', text: x.text })), ...(job.feedback || [])], previousIssues: structuralIssues }) + '\nREFERENCE_ANALYSIS=' + JSON.stringify(referenceAnalysis) + (lastPlannerError ? '\nPREVIOUS_ATTEMPT_ERROR=' + JSON.stringify(lastPlannerError) + '\nCorrect only the identified error and return one complete JSON document.' : '') },
         ],
-        schema: spatialPlanSchema,
+        schema: isGeneric ? inventorySchema : spatialPlanSchema,
         traceContext: { runId: job.id, phase: 'planning', attempt: attempt + 1, traceLevel: job.traceLevel },
       });
       // Normalize only once: a second pass would discard the original repair
       // audit and could turn a successfully repaired virtual root into noise.
       const plan = normalizeSpatialPlan(response.data, null, [10, 10, 10]);
+      if(isGeneric){
+        plan.category=resolveCategory(response.data.category,job);
+        plan.interpreterVersion=PRIMITIVE_VERSION;
+      }
       structuralIssues = plan.structureNormalization?.unresolved || [];
       if (plan.structureNormalization?.repairs?.length) {
         await traceEvent(job.id, 'SPATIAL_PLAN_REPAIRED', {
@@ -245,7 +254,60 @@ async function buildPlan(job, referenceAnalysis) {
   }
 }
 
+async function makeGenericGeometry(job, variant){
+  const seed=seedFor([job.brief,job.category,variant.profile.id,PRIMITIVE_VERSION].join(':'));
+  let lastError=null;
+  for(let attempt=0;attempt<config.maxGeometryAttempts;attempt+=1){
+    try{
+      const response=await structuredChat({
+        provider:providerFor(job),
+        messages:[
+          {role:'system',content:genericGeometrySystem},
+          {role:'user',content:geometryUser({
+            plan:job.plan,profile:variant.profile,
+            examples:(job.memoryExamples||[]).filter(x=>x.decomposition),
+            feedback:[...(job.memoryLessons||[]).map(x=>({source:'validated_memory',text:x.text})),...(job.feedback||[])],
+            previousReview:variant.sourceReview||null,
+          })}
+        ],
+        schema:primitiveGeometrySchema,
+        traceContext:{runId:job.id,variantId:variant.id,phase:'geometry',attempt:attempt+1,traceLevel:job.traceLevel},
+      });
+      const built=interpretPrimitives(response.data,job.plan,{
+        profile:variant.profile.id,maxParts:job.maxParts||180,minDetail:.2,seed
+      });
+      const geometry=normalizeGeometry(built,job.plan);
+      const audit=geometryAudit(geometry,job.plan);
+      if(!audit.passed)throw Object.assign(new Error('Audit primitives : '+audit.issues.map(x=>x.code).join(', ')),
+        {code:'GEOMETRY_AUDIT_FAILED',details:audit.issues});
+      await traceArtifact(job.id,'plans','primitive_decomposition_'+variant.id,{
+        schemaVersion:2,interpreterVersion:PRIMITIVE_VERSION,decomposition:response.data,warnings:built.warnings,
+      },{variantId:variant.id,phase:'geometry'});
+      await traceEvent(job.id,'PRIMITIVE_GEOMETRY_BUILT',{
+        interpreterVersion:PRIMITIVE_VERSION,partCount:geometry.parts.length,
+        warnings:built.warnings,seed,category:job.plan.category
+      },{variantId:variant.id,phase:'geometry'});
+      return {geometry,audit,definition:{
+        archetype:null,primitives:response.data,version:PRIMITIVE_VERSION,variation:variant.profile.id,
+      },generation:{provider:response.meta.provider,model:response.meta.model,fallback:false}};
+    }catch(cause){
+      lastError=cause;
+      await traceEvent(job.id,'GENERIC_PRIMITIVE_RETRY',{code:cause.code||'PRIMITIVE_ERROR',
+        message:cause.message,details:cause.details||null},
+        {variantId:variant.id,phase:'geometry',attempt:attempt+1});
+    }
+  }
+  await traceEvent(job.id,'GENERIC_PRIMITIVE_FALLBACK',{
+    reason:lastError?.message||'Unknown failure',mode:'legacy_parts'
+  },{variantId:variant.id,phase:'geometry'});
+  return null;
+}
+
 async function makeGeometry(job, variant) {
+  if(job.geometryStrategy === 'generic_primitives_v1'){
+    const generic=await makeGenericGeometry(job,variant);
+    if(generic)return generic;
+  }
   let lastError = null;
   const seed = seedFor(job.id + ':' + variant.id);
   const expectedArchetype = guessArchetype(job);
