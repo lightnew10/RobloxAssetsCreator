@@ -4,11 +4,11 @@ import { config } from './config.js';
 import { executeStudioTool } from './studioBridge.js';
 import { traceArtifact, traceEvent } from './trace.js';
 
-function cameraFor(variant, view) {
+function cameraFor(variant, view, planSize=null) {
   const centerX = Number(variant.bounds?.centerX) || 0;
   const centerY = Number(variant.bounds?.centerY) || Math.max(2, Number(variant.bounds?.size?.[1]) / 2 || 5);
   const centerZ = Number(variant.bounds?.centerZ) || 0;
-  const size = variant.bounds?.size || [10,10,10];
+  const size = Array.isArray(planSize) ? planSize : variant.bounds?.size || [10,10,10];
   const extent = Math.max(4, ...size.map((x) => Number(x) || 0));
   const d = Math.min(160, Math.max(12, extent * 2.4));
   if (view === 1) return { camera_position: [centerX + d, centerY + d * 0.12, centerZ + d * 0.18], look_at_position: [centerX,centerY,centerZ] };
@@ -17,7 +17,7 @@ function cameraFor(variant, view) {
 }
 
 export async function captureVariant(job, variant, view) {
-  const camera = cameraFor(variant, view);
+  const camera = cameraFor(variant, view, job.plan?.sizeStuds);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const result = await executeStudioTool('screen_capture', {
       studio_id: job.studioId,
