@@ -2,14 +2,21 @@
   "name": "roblox-assets-creator",
   "version": "0.1.0",
   "private": true,
-  "workspaces": ["server", "web"],
+  "workspaces": [
+    "server",
+    "web"
+  ],
   "scripts": {
     "dev:server": "npm run dev --workspace server",
     "dev:web": "npm run dev --workspace web",
     "start:server": "npm run start --workspace server",
     "build": "npm run build --workspace web",
     "test": "npm test --workspace server",
-    "verify": "npm run test && npm run build"
+    "verify": "npm run test && npm run build",
+    "export:dataset": "node server/scripts/export-dataset.js",
+    "benchmark:planning": "node server/scripts/benchmark-planning.js"
   },
-  "engines": { "node": ">=20.19.0" }
+  "engines": {
+    "node": ">=20.19.0"
+  }
 }

@@ -1,5 +1,5 @@
 export const plannerSystem = `Tu es l'architecte 3D de RobloxAssetsCreator.
-Transforme le brief en plan 3D exécutable, pas en description vague.
+Transforme le brief en plan 3D spatial CONCIS, pas en description vague. 3 à 7 composants principaux suffisent ; vise moins de 1500 tokens JSON.
 Contraintes absolues :
 - tous les composants ont un id stable et unique ;
 - parentId ne peut référencer qu'un id réellement présent ;
@@ -15,14 +15,14 @@ Contraintes absolues :
 - essentialCriteria contient 3 à 8 critères visuels mesurables.
 Réponds uniquement en JSON.`;
 
-export const geometrySystem = `Tu es un constructeur 3D Roblox.
-À partir du plan spatial, produis une géométrie de Parts Roblox directement constructible.
-Ne simplifie pas une structure essentielle en grosse boule ou cube si le plan décrit des feuilles, branches ou volumes distincts.
-Utilise suffisamment de segments pour les courbes et silhouettes longues.
-Chaque part doit avoir : name, componentId, shape, size, position, rotation, color RGB, material, canCollide.
-Shapes autorisées : box, cylinder, ball, wedge.
-Les coordonnées sont relatives au centre de l'asset ; Y=0 correspond au sol.
-Conserve l'échelle du plan. Réponds uniquement en JSON.`;
+export const geometrySystem = `Tu sélectionnes un archétype procédural Roblox, puis ses PARAMÈTRES.
+Ne produis PAS une liste de centaines de Parts. Réponds avec un JSON très court :
+{"archetype":"palmTree|broadleaf|rock|house","params":{...},"variation":"balanced|silhouette|detail|compact|expressive|clean"}.
+Archétypes : palmTree (cocotier/palmier), broadleaf (arbre feuillu), rock (rocher), house (maison).
+Les champs de params sont ceux du schéma : height, curvature, baseRadius, frondCount, frondLength, segments, trunkColor, leafColor, coconutColor, material ; ou branchCount, crownWidth ; ou width, lumps, roughness, rockColor ; ou depth, roofSlope, wallColor, roofColor.
+Couleurs RGB [R,G,B]. La hauteur, la largeur, les rayons et les longueurs sont des FRACTIONS de sizeStuds (0..1), pas des studs absolus.
+Préserve silhouette et critères essentiels. Les profils changent courbure, hauteur, longueur, nombre de segments/feuilles et pas seulement les couleurs.
+Si l'objet n'appartient à aucun archétype, tu peux renvoyer le format Parts historique. JSON uniquement.`;
 
 export const reviewSystem = `Tu es le contrôleur qualité visuel d'un asset Roblox.
 Compare les captures au brief et au plan. Note sévèrement ce qui ne ressemble pas à l'objet demandé.
@@ -35,6 +35,6 @@ Réponds uniquement en JSON.`;
 export function plannerUser({ brief, category, subtype, style, feedback, previousIssues }) {
   return JSON.stringify({ brief, category, subtype, style, feedback: feedback || [], previousStructuralIssues: previousIssues || [] });
 }
-export function geometryUser({ plan, profile, feedback, previousReview }) {
-  return JSON.stringify({ plan, variationProfile: profile, userFeedback: feedback || [], previousReview: previousReview || null });
+export function geometryUser({ plan, profile, feedback, previousReview, examples=[] }) {
+  return JSON.stringify({ spatialPlan: plan, variationProfile: profile, validatedExamples: examples.slice(0,3).map(x=>({brief:x.brief,category:x.category,archetype:x.archetype,params:x.params,score:x.score})), userFeedback: feedback || [], previousReview: previousReview || null });
 }

@@ -2,7 +2,7 @@ import express from 'express';
 import { existsSync } from 'node:fs';
 import { config } from './config.js';
 import { clearProviderKey, getProviderSettings, updateProviderSettings } from './providerSettings.js';
-import { providerHealth } from './providers.js';
+import { providerHealth, ollamaMemoryDiagnostic } from './providers.js';
 import { getStudioStatus, grantStudioAccess, listStudioTools, readStudioTree, revokeStudioAccess } from './studioBridge.js';
 import { closeStudioMcp } from './studioMcpClient.js';
 import { createAssetJob, queueStatus, reconcileInterruptedJobs, requestCorrection, resumeJob, selectAndSave, stopJob } from './pipeline.js';
@@ -102,6 +102,7 @@ app.use((err,req,res,_next)=>{
 
 const server=app.listen(config.port,config.host,()=>{
   console.log(`RobloxAssetsCreator API http://${config.host}:${config.port}`);
+  ollamaMemoryDiagnostic().catch(error=>console.warn('[RAC] Ollama diagnostics:',error.message));
   reconcileInterruptedJobs().then((count)=>{if(count)console.log('[RAC] '+count+' job(s) marqué(s) interrompu(s) après redémarrage.');}).catch((error)=>console.error('[RAC] startup recovery',error));
 });
 function shutdown(){ closeStudioMcp(); server.close(()=>process.exit(0)); setTimeout(()=>process.exit(1),4000).unref(); }

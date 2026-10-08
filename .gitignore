@@ -11,3 +11,6 @@ data/provider-settings.json
 .vscode/
 .idea/
 package-lock.json
+
+# Validated user selections used for local-only future training
+dataset.jsonl

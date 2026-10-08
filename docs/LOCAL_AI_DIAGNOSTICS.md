@@ -8,12 +8,12 @@ Job cocotier tropical, 2026-10-07 à partir de 23:14 UTC : trois tentatives du m
 - Le raisonnement lui-même n'est pas copié dans les traces ; seulement un nombre de caractères et la progression.
 - Délai d'INACTIVITÉ de 15 minutes par défaut ; remise à zéro lorsqu'un fragment réseau arrive ; limite globale de 60 minutes par requête. Les deux durées sont configurables dans server/.env.
 - Un vrai timeout de planification ne rejoue plus trois fois automatiquement exactement le même appel. Choisir un autre modèle de planification, vérifier la mémoire ou augmenter les limites.
-- Le contexte Ollama reste à 16 384 tokens par défaut et se règle par `OLLAMA_NUM_CTX`. Ce nombre n'est pas le nombre de tokens réellement envoyés : c'est la fenêtre de contexte demandée.
+- Le contexte Ollama reste à 8 192 tokens par défaut et se règle par `OLLAMA_NUM_CTX`. Ce nombre n'est pas le nombre de tokens réellement envoyés : c'est la fenêtre de contexte demandée.
 
 ## Réglages `server/.env`
 - `OLLAMA_IDLE_TIMEOUT_MS=900000` (15 minutes sans aucun fragment de réponse)
 - `OLLAMA_MAX_DURATION_MS=3600000` (60 minutes au total par appel)
-- `OLLAMA_NUM_CTX=16384` (fenêtre de contexte Ollama ; augmenter si nécessaire ET si la RAM/VRAM le permet)
+- `OLLAMA_NUM_CTX=8192` (fenêtre de contexte Ollama ; augmenter si nécessaire ET si la RAM/VRAM le permet)
 Ces changements nécessitent un redémarrage du serveur.
 
 ## Utiliser un modèle plus fort pour le plan, sans changer le reste
@@ -102,3 +102,15 @@ Après ce correctif, la valeur attendue de `server.buildTag` sur `http://127.0.0
 5. Si Roblox n'a pas fourni de motif à l'échec, transmettre la réponse `wait_job_finished`, les diagnostics MCP et la sortie de Studio. Aucun correctif local ne peut garantir la disponibilité du service Roblox.
 
 **Portée** : ces changements corrigent le chemin de diagnostic et les relances à l'identique, pas les échecs externes du service de génération Roblox. Un test de bout en bout sous Windows/Studio reste indispensable.
+
+
+## Profil recommandé pour 8 Go de VRAM
+
+Le nouveau défaut est OLLAMA_NUM_CTX=8192, modifiable dans server/.env. Si une ancienne valeur 16384 y figure, la changer manuellement.
+Limites de sortie : OLLAMA_PLAN_NUM_PREDICT=1500, OLLAMA_GEOMETRY_NUM_PREDICT=650, OLLAMA_REVIEW_NUM_PREDICT=900. Augmenter si un JSON légitime est tronqué.
+La géométrie procédurale est construite en JavaScript après la réponse compacte de l'IA, sans demander une liste de centaines de coordonnées.
+Les requêtes Ollama locales texte et vision sont sérialisées et toutes envoyées avec keep_alive:0 ; les chargements sont plus lents mais évitent que les modèles résident simultanément en VRAM.
+Au démarrage, GET /api/ps avertit si un modèle déjà chargé utilise partiellement le CPU et propose de réduire le contexte ou d'utiliser un modèle plus petit.
+Conseil : modèle texte 7–8B en Q4_K_M, après comparaison de sa fiabilité sur les JSON. qwen3.5:9b reste configurable, sans garantie de chargement intégral sur une carte 8 Go.
+Variables du SERVEUR Ollama : OLLAMA_FLASH_ATTENTION=1 et OLLAMA_KV_CACHE_TYPE=q8_0. Les définir dans l'environnement Windows qui lance Ollama, puis redémarrer ce service. Leur compatibilité dépend des versions et modèles.
+Commande exploratoire : npm run benchmark:planning produit data/runtime/benchmark-planning.json en comparant une et deux étapes sur quatre briefs. Aucune stratégie expérimentale n'est activée automatiquement.

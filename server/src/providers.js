@@ -6,6 +6,12 @@ import { traceProviderEvent, traceEvent } from './trace.js';
 import { parseOllamaChatStream } from './ollamaStream.js';
 
 const ajv = new Ajv({ allErrors: true, strict: false });
+let ollamaQueue = Promise.resolve();
+function serializeOllama(action) {
+  const result = ollamaQueue.catch(()=>{}).then(action);
+  ollamaQueue = result.then(()=>{},()=>{});
+  return result;
+}
 
 function error(code, message, details = null) {
   const value = new Error(message);
@@ -87,11 +93,15 @@ async function localChat({ runtime, messages, schema, images, traceContext = {},
       ? { ...message, images: images.map(normalizeImage).filter(Boolean).map((img) => img.data) }
       : message),
     stream: true,
+    // Unload after each local call so vision + text cannot occupy VRAM simultaneously.
+    keep_alive: 0,
     // Qwen3.5 can otherwise spend an entire attempt in thinking mode.
     // Never put think inside options: Ollama expects it at the top level.
     ...(typeof thinkOverride === 'boolean' ? { think: thinkOverride } : traceContext.phase === 'planning' ? { think: config.ollamaPlanningThink } : {}),
     format: schema || 'json',
-    options: { temperature: 0.2, num_ctx: config.ollamaNumCtx },
+    options: { temperature: 0.2, num_ctx: config.ollamaNumCtx,
+      num_predict: traceContext.phase === 'planning' ? config.ollamaPlanNumPredict :
+        traceContext.phase === 'geometry' ? config.ollamaGeometryNumPredict : config.ollamaReviewNumPredict },
   };
   const controller = new AbortController();
   const startedAt = Date.now();
@@ -108,7 +118,8 @@ async function localChat({ runtime, messages, schema, images, traceContext = {},
   resetIdle();
   if (traceContext.runId) await traceEvent(traceContext.runId, 'OLLAMA_REQUEST_SETTINGS', {
     model: runtime.textModel, think: body.think ?? null, temperature: body.options.temperature,
-    numCtx: body.options.num_ctx, schemaConstrained: typeof body.format === 'object',
+    numCtx: body.options.num_ctx, numPredict: body.options.num_predict, keepAlive:body.keep_alive,
+    schemaConstrained: typeof body.format === 'object',
     maxThinkingOnlyMs: config.ollamaMaxThinkingOnlyMs,
   }, traceContext);
   try {
@@ -226,7 +237,7 @@ async function callProvider({ provider, messages, schema, images = [], timeoutMs
   await traceProviderEvent({ kind: 'request', callId, provider, model: runtime.textModel, messages, schema, images, traceContext });
   let response;
   try {
-    if (provider === 'local') response = await localChat({ runtime, messages, schema, images, traceContext, thinkOverride });
+    if (provider === 'local') response = await serializeOllama(() => localChat({ runtime, messages, schema, images, traceContext, thinkOverride }));
     else if (provider === 'openai') response = await openAiCompatible({ runtime, messages, schema, images, timeoutMs, url: 'https://api.openai.com/v1/chat/completions' });
     else if (provider === 'deepseek') response = await openAiCompatible({ runtime, messages, schema, images: [], timeoutMs, url: 'https://api.deepseek.com/chat/completions' });
     else if (provider === 'openrouter') response = await openAiCompatible({ runtime, messages, schema, images, timeoutMs, url: 'https://openrouter.ai/api/v1/chat/completions', headers: { 'HTTP-Referer': 'http://127.0.0.1', 'X-Title': 'RobloxAssetsCreator' } });
@@ -274,4 +285,26 @@ export async function providerHealth() {
     results.local = { ok: false, error: cause.message };
   }
   return results;
+}
+
+/** Diagnostic best effort at startup; only warns when Ollama reports resident CPU layers. */
+export async function ollamaMemoryDiagnostic({ log = console, fetcher = fetch } = {}) {
+  try {
+    const base = config.ollamaUrl.endsWith('/') ? config.ollamaUrl.slice(0,-1) : config.ollamaUrl;
+    const response=await fetcher(base+'/api/ps');
+    if(!response.ok){log.warn('[RAC][OLLAMA_PS]', 'HTTP '+response.status);return [];}
+    const data=await response.json(),models=Array.isArray(data?.models)?data.models:[];
+    for(const model of models){
+      const total=Number(model.size)||0,gpu=Number(model.size_vram)||0;
+      const gb=(n)=>(n/1024**3).toFixed(2)+' Go';
+      if(total>0 && gpu<total*.95) log.warn('[RAC][OLLAMA_VRAM]', {
+        model:model.name||model.model,totalMemory:gb(total),gpuMemory:gb(gpu),
+        gpuPercent:Math.round(gpu/total*100),
+        suggestion:'Modèle réparti CPU/GPU : réduire OLLAMA_NUM_CTX, choisir 7-8B Q4_K_M ou une quantification plus basse.'
+      });
+      else log.info?.('[RAC][OLLAMA_VRAM]',{model:model.name||model.model,totalMemory:gb(total),gpuMemory:gb(gpu)});
+    }
+    if(!models.length)log.info?.('[RAC][OLLAMA_VRAM] Aucun modèle actif dans /api/ps.');
+    return models;
+  } catch(cause){log.warn('[RAC][OLLAMA_PS] Indisponible : '+cause.message);return [];}
 }

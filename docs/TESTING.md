@@ -134,3 +134,27 @@ Rejouer le même cocotier avec **Auto**, puis vérifier `API ollama-native-diagn
 - Si le verrou persiste : `JOB_SAVE_BLOCKED` indique le chemin et le code Windows d'origine. Inspecter alors les autres serveurs Node, les synchroniseurs et antivirus. Ne pas supprimer le JSON existant.
 - Les fichiers temporaires du job sont nettoyés en cas d'erreur. Les tests automatiques simulent les conflits de renommage et exécutent désormais la suite sur Linux et Windows.
 - Ne pas renommer ni supprimer manuellement les jobs actifs et ne pas interrompre `start.bat` pour tenter de contourner un verrou transitoire.
+
+
+## Tests de la génération paramétrique (automatisés)
+
+- Les quatre archétypes : taille, coordonnées Y >= 0, graine déterministe, silhouettes et boîtes englobantes différentes entre compact et silhouette.
+- Schéma ancien parts toujours accepté ; mapping des composants du plan.
+- Exemple non choisi / note manquante / score < 8 jamais exporté dans dataset.jsonl.
+- Stockage des exemples validés, similarité par catégorie et brief ; métriques de durée et corrections.
+- Référence PNG : comparaison couleur spatiale expérimentale, sans modifier la note du modèle.
+
+## Tests manuels requis dans Roblox Studio
+
+1. git pull origin main, puis redémarrer start.bat, autoriser Studio et sélectionner Sans IA Roblox.
+2. Générer trois cocotiers ; examiner courbure, palmes et noix et comparer les bounding boxes ; aucune requête native Roblox ne doit apparaître.
+3. Générer arbre feuillu, rocher et maison ; inspecter les surfaces au sol, positions et proportions.
+4. Essayer un prop inconnu : le mode Parts libre historique doit continuer de fonctionner.
+5. Sélectionner une variante notée au moins 8/10, puis vérifier data/runtime/examples.jsonl ; un modèle non sélectionné ne doit jamais y entrer.
+6. Lancer npm run export:dataset ; vérifier les rôles system/user/assistant et les exemples réellement validés.
+7. Inspecter data/runtime/metrics.jsonl : score, durée et corrections.
+8. Fournir image PNG de référence et vérifier REFERENCE_SIMILARITY_EXPERIMENT. Le score de comparaison histogramme ne doit pas remplacer l'avis visuel.
+9. Vérifier OLLAMA_REQUEST_SETTINGS : contexte 8192, numPredict borné, keepAlive=0, et suivre le chargement GPU/CPU.
+10. Exécuter éventuellement npm run benchmark:planning et comparer les sorties sur les mêmes briefs. Deux étapes non activées par défaut.
+
+Ces essais Studio, Ollama réel et validité visuelle ne sont pas exécutables par CI ; ne pas les déclarer réussis sans contrôle manuel.
