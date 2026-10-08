@@ -162,6 +162,7 @@ async function analyzeReferences(job) {
 
 async function buildPlan(job, referenceAnalysis) {
   let structuralIssues = [];
+  let noThinkingFallback = false;
   let lastIncident = null;
   await mutateJob(job.id, (item) => { item.status = 'planning'; event(item, 'plan.started', 'Création du plan 3D.'); return item; });
   for (let attempt = 0; attempt < config.maxPlanAttempts; attempt += 1) {
@@ -169,6 +170,8 @@ async function buildPlan(job, referenceAnalysis) {
       const response = await structuredChat({
         provider: job.planningProvider || providerFor(job),
         modelOverride: job.planningModel || '',
+        // Only disable thinking after a diagnosed empty response or stalled thinking.
+        thinkOverride: noThinkingFallback ? false : null,
         messages: [
           { role: 'system', content: plannerSystem },
           { role: 'user', content: plannerUser({ brief: job.brief, category: job.category, subtype: job.subtype, style: job.style, feedback: [...(job.memoryLessons || []).map((x) => ({ source: 'validated_memory', text: x.text })), ...(job.feedback || [])], previousIssues: structuralIssues }) + '\nREFERENCE_ANALYSIS=' + JSON.stringify(referenceAnalysis) },
@@ -204,6 +207,15 @@ async function buildPlan(job, referenceAnalysis) {
       });
       lastIncident = snapshot.recovery.incidents.at(-1);
       await traceIncident(snapshot, lastIncident);
+      if ((job.planningProvider || providerFor(job)) === 'local' && !noThinkingFallback &&
+          (cause.code === 'AI_THINKING_STALLED' ||
+            (cause.code === 'AI_INVALID_JSON' && cause.details?.preview === ''))) {
+        noThinkingFallback = true;
+        await traceEvent(job.id, 'PLAN_AI_STRATEGY_CHANGED', {
+          strategy: 'ollama_think_false', reason: cause.code,
+          note: 'Fallback de récupération ; la validation du schéma JSON reste obligatoire.',
+        }, { phase: 'planning', attempt: attempt + 1, traceLevel: job.traceLevel });
+      }
       // Repeating a stalled model with identical inputs and settings is not a recovery strategy.
       // Stop after a genuine Ollama timeout and let the user choose another planning model
       // or increase the configured limits; leave normal retries for schema/structure failures.
