@@ -132,3 +132,37 @@ test('does not hide a missing real trunk shared by several details', () => {
     return true;
   });
 });
+
+test('repairs the new cocotier incident when trunk_base points to an implicit Model or Model Roblox', () => {
+  for (const virtualParent of ['Model', 'Model Roblox', 'Roblox Model', 'model_root']) {
+    const raw = {
+      sizeStuds: [10, 24, 10],
+      components: [
+        { id: 'trunk_base', name: 'trunk_base', shape: 'cylinder', material: 'Wood', parentId: virtualParent, relativeSize: [.14, .6, .14] },
+        { id: 'frond', name: 'frond', shape: 'curved_leaf', material: 'Grass', parentId: 'trunk_base' },
+      ],
+      essentialCriteria: ['trunk visible', 'separate fronds', 'palm silhouette'],
+      captureViews: ['front', 'side', 'top'],
+      nativeMethod: 'generate_mesh',
+    };
+    const plan = normalizeSpatialPlan(raw);
+    assert.equal(plan.components[0].parentId, undefined, virtualParent);
+    assert.equal(plan.components[1].parentId, 'trunk_base', virtualParent);
+    assert.equal(plan.structureNormalization.repairs.filter(r => r.code === 'virtual_root_detached').length, 1, virtualParent);
+  }
+});
+
+test('real component explicitly named Model remains a valid parent', () => {
+  const plan = normalizeSpatialPlan({
+    sizeStuds: [10, 15, 10],
+    components: [
+      { id: 'model', name: 'Model', shape: 'box', material: 'Wood' },
+      { id: 'leaf', name: 'Leaf', shape: 'wedge', material: 'Grass', parentId: 'Model' },
+    ],
+    essentialCriteria: ['solid support', 'leaf attachment', 'shape'],
+    captureViews: ['front', 'side', 'top'],
+    nativeMethod: 'generate_mesh',
+  });
+  assert.equal(plan.components[1].parentId, 'model');
+  assert.equal(plan.structureNormalization.repairs.filter(r => r.code === 'virtual_root_detached').length, 0);
+});
