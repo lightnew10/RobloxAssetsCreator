@@ -117,6 +117,7 @@ async function drain() {
 
 async function withRecovery(jobId, stage, variantId, fn) {
   let previousIncident = null;
+  let lastCause = null;
   // Native generation jobs are expensive; repeating the same failed job does not fix an opaque "Failed".
   // Try a different native method in runVariant instead of three identical MCP calls.
   const maxPasses = stage === 'native_build' ? 1 : 3;
@@ -126,6 +127,7 @@ async function withRecovery(jobId, stage, variantId, fn) {
       if (previousIncident) await mutateJob(jobId, (job) => { markRecovered(job, previousIncident); return job; });
       return result;
     } catch (cause) {
+      lastCause = cause;
       const snapshot = await mutateJob(jobId, (job) => {
         const incident = recordIncident(job, { stage, variantId, code: cause.code || 'PIPELINE_ERROR', message: cause.message, details: cause.details });
         event(job, 'recovery.incident', cause.message, incident);
@@ -140,6 +142,8 @@ async function withRecovery(jobId, stage, variantId, fn) {
       }
     }
   }
+  // A recovery that exhausted attempts must never silently return undefined.
+  throw lastCause || Object.assign(new Error('Récupération épuisée.'), { code: 'RECOVERY_EXHAUSTED' });
 }
 
 async function analyzeReferences(job) {
