@@ -21,7 +21,6 @@ export async function writeAtomicJson(file, value, {
   if (typeof serialized !== 'string') throw new TypeError('Cannot serialize undefined JSON value.');
   await fsApi.mkdir(path.dirname(file), { recursive: true });
   const temp = file + '.' + randomUUID() + '.tmp';
-  let committed = false;
   try {
     // A unique file avoids writers overwriting each other's temporary snapshots.
     await fsApi.writeFile(temp, serialized, 'utf8');
@@ -29,7 +28,6 @@ export async function writeAtomicJson(file, value, {
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
         await fsApi.rename(temp, file);
-        committed = true;
         return;
       } catch (cause) {
         if (!RETRYABLE_RENAME_CODES.has(cause?.code)) throw cause;
@@ -56,7 +54,7 @@ export async function writeAtomicJson(file, value, {
       if (cause?.code !== 'ENOENT') {
         // A temporary-file cleanup failure must not erase the original error.
         // The unique filename is safe for later manual cleanup after shutdown.
-        if (committed) console.warn('[RAC] Temporary job cleanup:', cause.message);
+        console.warn('[RAC][JOB_TEMP_CLEANUP_FAILED]', { temp, code: cause.code, message: cause.message });
       }
     }
   }
