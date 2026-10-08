@@ -115,8 +115,12 @@ export function describeNativeFailure(finished, method, jobId) {
     finished?.error?.message, finished?.error, finished?.message, finished?.reason,
     finished?.failureReason, finished?.errorMessage, result?.error?.message, result?.error,
     result?.message, result?.reason, result?.failureReason,
+    finished?.details?.message, finished?.details?.error?.message,
+    ...(Array.isArray(finished?.errors) ? finished.errors : []),
+    ...(Array.isArray(result?.content) ? result.content.filter((item) => item?.type === 'text').map((item) => item.text) : []),
   ];
-  const reason = values.find((value) => typeof value === 'string' && value.trim()) || null;
+  const reason = values.map((value) => typeof value === 'string' ? value : value?.message)
+    .find((value) => typeof value === 'string' && value.trim())?.slice(0, 3000) || null;
   return {
     method, jobId, status: String(finished?.status || 'unknown'),
     reason, providerDetailsAvailable: Boolean(reason),
