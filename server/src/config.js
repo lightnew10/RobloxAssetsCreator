@@ -19,7 +19,9 @@ export const config = Object.freeze({
   ollamaIdleTimeoutMs: boundedInteger(process.env.OLLAMA_IDLE_TIMEOUT_MS, 900000, 30000, 7200000),
   ollamaMaxDurationMs: boundedInteger(process.env.OLLAMA_MAX_DURATION_MS, 3600000, 60000, 14400000),
   // Abort planning only when the model thinks continuously without any answer.
-  ollamaMaxThinkingOnlyMs: boundedInteger(process.env.OLLAMA_MAX_THINKING_ONLY_MS, 360000, 30000, 14400000),
+  ollamaMaxThinkingOnlyMs: boundedInteger(process.env.OLLAMA_MAX_THINKING_ONLY_MS, 90000, 30000, 14400000),
+  // JSON planning is a deterministic output task; reasoning is opt-in, not default.
+  ollamaPlanningThink: bool(process.env.OLLAMA_PLANNING_THINK, false),
   ollamaNumCtx: boundedInteger(process.env.OLLAMA_NUM_CTX, 16384, 2048, 131072),
   traceLevel: ['off', 'basic', 'full'].includes(process.env.TRACE_LEVEL) ? process.env.TRACE_LEVEL : 'full',
   dataRoot: path.join(root, 'data'),
