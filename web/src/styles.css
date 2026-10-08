@@ -35,3 +35,15 @@
 .source-score-comparison small,.source-score-comparison p{font-size:11px;line-height:1.45;color:var(--muted)}
 .source-score-comparison p{margin:6px 0 0}
 @media(max-width:700px){.source-score-comparison>div{grid-template-columns:1fr}}
+
+/* Optional generic decomposition review */
+.decomposition-approval{margin:16px 0;padding:16px;border:1px solid #486455;border-radius:10px;background:#111e18}
+.decomposition-approval h3{margin:0 0 8px;font-size:15px}
+.decomposition-approval p{font-size:12px;line-height:1.5;color:var(--muted)}
+.decomposition-approval textarea{min-height:180px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
+.decomposition-approval button{margin-top:10px}
+.preview-toggle{grid-column:span 2;flex-direction:row!important;gap:9px!important;align-items:center}
+.preview-toggle input{accent-color:var(--accent)}
+.variant-actions small{grid-column:1/-1;color:var(--muted);font-size:10px}
+.variant-actions label{display:grid;gap:5px;color:var(--muted);font-size:11px}
+@media(max-width:700px){.preview-toggle{grid-column:1}}
