@@ -19,7 +19,7 @@ const api = async (url, options={}) => {
 const scoreClass = (score) => score >= 8 ? 'good' : score >= 5 ? 'mid' : 'bad';
 const statusLabel = {
   queued:'En attente',understanding:'Analyse référence',planning:'Planification',generating:'Génération',
-  review_ready:'À valider',saved:'Sauvegardé',failed:'Erreur',stopped:'Arrêté',interrupted:'Interrompu'
+  review_ready:'À valider',awaiting_decomposition_review:'Inventaire à valider',saved:'Sauvegardé',failed:'Erreur',stopped:'Arrêté',interrupted:'Interrompu'
 };
 
 function ProviderSettings({settings,onClose,onReload}) {
@@ -115,7 +115,7 @@ function StudioPanel({studio,onRefresh}) {
 }
 
 function CreatePanel({settings,studio,onCreated}) {
-  const [form,setForm]=useState({name:'',brief:'',category:'tree',subtype:'',style:'stylized Roblox',provider:settings.selectedProvider,planningProvider:settings.selectedProvider,planningModel:'',visionProvider:settings.selectedVisionProvider,variantTarget:3});
+  const [form,setForm]=useState({name:'',brief:'',category:'tree',subtype:'',style:'Roblox low-poly, formes simplifiées, arêtes franches',sizeStuds:[10,12,10],maxParts:180,previewDecomposition:false,provider:settings.selectedProvider,planningProvider:settings.selectedProvider,planningModel:'',visionProvider:settings.selectedVisionProvider,variantTarget:3});
   const [images,setImages]=useState([]);
   const [error,setError]=useState('');
   useEffect(()=>setForm(f=>({...f,provider:settings.selectedProvider,visionProvider:settings.selectedVisionProvider})),[settings.selectedProvider,settings.selectedVisionProvider]);
@@ -145,11 +145,16 @@ function CreatePanel({settings,studio,onCreated}) {
         <label>Modèle de planification (facultatif)<input value={form.planningModel} onChange={e=>setForm({...form,planningModel:e.target.value})} placeholder="Vide = modèle du provider sélectionné" /></label>
         <label>IA vision<select value={form.visionProvider} onChange={e=>setForm({...form,visionProvider:e.target.value})}>{providers.map(id=><option key={id} value={id} disabled={!settings.providers[id]?.configured}>{id}</option>)}</select></label>
         <div className="generation-summary"><strong>Mode 3D actif</strong><span>{generationModeName(settings.generationMode)}</span><small>Modifiable via « Paramètres IA » en haut à droite.</small></div>
+        <label>Largeur (studs)<input type="number" min="0.2" max="200" step="0.2" value={form.sizeStuds[0]} onChange={e=>setForm({...form,sizeStuds:[Number(e.target.value),form.sizeStuds[1],form.sizeStuds[2]]})}/></label>
+        <label>Hauteur (studs)<input type="number" min="0.2" max="200" step="0.2" value={form.sizeStuds[1]} onChange={e=>setForm({...form,sizeStuds:[form.sizeStuds[0],Number(e.target.value),form.sizeStuds[2]]})}/></label>
+        <label>Profondeur (studs)<input type="number" min="0.2" max="200" step="0.2" value={form.sizeStuds[2]} onChange={e=>setForm({...form,sizeStuds:[form.sizeStuds[0],form.sizeStuds[1],Number(e.target.value)]})}/></label>
+        <label>Nombre de Parts maximal<input type="number" min="1" max="180" value={form.maxParts} onChange={e=>setForm({...form,maxParts:Number(e.target.value)})}/></label>
+        <label className="preview-toggle"><input type="checkbox" checked={form.previewDecomposition} onChange={e=>setForm({...form,previewDecomposition:e.target.checked})}/> Examiner la décomposition avant construction</label>
         <label>Variantes<select value={form.variantTarget} onChange={e=>setForm({...form,variantTarget:Number(e.target.value)})}>{[1,2,3,4,5,6].map(n=><option key={n}>{n}</option>)}</select></label>
       </div>
       <label>Brief complet<textarea rows="5" value={form.brief} onChange={e=>setForm({...form,brief:e.target.value})} placeholder="Décris la silhouette, les proportions, les branches, feuilles, couleurs, détails indispensables..." /></label>
       <div className="reference-row">
-        <label className="upload">Références visuelles<input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={e=>fileChange(e.target.files)} /></label>
+        <label className="upload" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();fileChange(e.dataTransfer.files)}}>Références visuelles — glisser/déposer ou cliquer<input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={e=>fileChange(e.target.files)} /></label>
         <div className="reference-previews">{images.map((src,i)=><img key={i} src={src} />)}</div>
       </div>
       {error&&<div className="error">{error}</div>}
@@ -220,6 +225,28 @@ function GenerationScoreSummary({job}) {
   </div>;
 }
 
+function DecompositionApproval({job,onRefresh}){
+  const [draft,setDraft]=useState(JSON.stringify(job.plan?.components||[],null,2));
+  const [error,setError]=useState(''),[busy,setBusy]=useState(false);
+  useEffect(()=>setDraft(JSON.stringify(job.plan?.components||[],null,2)),[job.id,job.planVersion]);
+  const approve=async()=>{
+    setBusy(true);setError('');
+    try{
+      const components=JSON.parse(draft);
+      if(!Array.isArray(components)||!components.length)throw new Error('Le JSON doit contenir une liste de composants.');
+      await api('/api/jobs/'+job.id+'/decomposition',{method:'POST',body:JSON.stringify({components})});
+      await onRefresh();
+    }catch(e){setError(e.message)}finally{setBusy(false)}
+  };
+  return <section className="decomposition-approval">
+    <h3>Aperçu de décomposition — validation requise</h3>
+    <p>Vérifie les composants, leurs identifiants et parents. Tu peux les renommer, retirer ou modifier leurs proportions dans le JSON ci-dessous. La construction attend ta validation.</p>
+    <textarea rows={12} spellCheck={false} aria-label="Composants de la décomposition" value={draft} onChange={e=>setDraft(e.target.value)}/>
+    {error&&<div className="error">{error}</div>}
+    <button className="primary" disabled={busy} onClick={approve}>Valider la décomposition et construire</button>
+  </section>;
+}
+
 function JobDetail({job,onRefresh}) {
   const [traceOpen,setTraceOpen]=useState(false);
   const [trace,setTrace]=useState([]);
@@ -236,6 +263,7 @@ function JobDetail({job,onRefresh}) {
     {job.error&&<div className="error"><strong>{job.error.code}</strong> · {job.error.message}</div>}
     <GenerationScoreSummary job={job}/>
     <PlanView job={job}/>
+    {job.status==='awaiting_decomposition_review'&&<DecompositionApproval job={job} onRefresh={onRefresh}/>}
     <div className="variants">{(job.variants||[]).map(v=><VariantCard key={v.id} job={job} variant={v} onRefresh={onRefresh}/>)}</div>
     <div className="timeline"><h3>Activité</h3>{[...(job.events||[])].reverse().slice(0,40).map(e=><div key={e.id}><time>{new Date(e.at).toLocaleTimeString()}</time><strong>{e.type}</strong><span>{e.message}</span>{e.data && Object.keys(e.data).length > 0 && <details><summary>Détails techniques</summary><pre>{JSON.stringify(e.data,null,2).slice(0,12000)}</pre></details>}</div>)}</div>
     {traceOpen&&<div className="modal-backdrop"><div className="modal trace-modal"><div className="modal-head"><div><h2>FULL TRACE</h2><p>{trace.length} événements · {artifacts.length} artifacts</p></div><button onClick={()=>setTraceOpen(false)}>✕</button></div><div className="artifact-list">{artifacts.slice().reverse().map(a=><a key={a.id} href={'/api/jobs/'+job.id+'/trace/artifacts/'+a.id} target="_blank" rel="noreferrer"><strong>{a.category}</strong><span>{a.name}</span><small>{Math.round((a.size||0)/1024)} Ko</small></a>)}</div><pre>{trace.map(e=>JSON.stringify(e,null,2)).join('\n\n')}</pre></div></div>}
