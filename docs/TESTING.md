@@ -112,3 +112,7 @@ Pour diagnostiquer précisément :
 - les artifacts pertinents visibles dans **FULL TRACE**.
 
 Ne copie jamais ta clé API dans un message.
+
+## Test additionnel — version diagnostic v3
+
+Rejouer le même cocotier avec **Auto**, puis vérifier `API ollama-native-diagnostics-v3`, `OLLAMA_REQUEST_SETTINGS`, les erreurs natives détaillées, et le repli Parts si le service natif refuse. La validation locale doit être faite après la mise à jour depuis `main`.

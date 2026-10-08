@@ -10,6 +10,10 @@ let connecting = null;
 let serial = 0;
 let toolsCache = null;
 const pending = new Map();
+let stderrTail = '';
+export function getStudioMcpDiagnostics() {
+  return { stderrTail: stderrTail.slice(-4096) || null, pendingRequests: pending.size, connected: Boolean(child?.stdin?.writable) };
+}
 
 export function studioMcpAvailable() {
   return process.platform === 'win32' && Boolean(process.env.LOCALAPPDATA) && existsSync(launcher);
@@ -37,7 +41,9 @@ function onLine(line) {
   if (!item) return;
   pending.delete(packet.id);
   clearTimeout(item.timer);
-  if (packet.error) item.reject(Object.assign(new Error(packet.error.message || 'Erreur MCP Studio.'), { code: 'MCP_RPC_ERROR', details: packet.error }));
+  if (packet.error) item.reject(Object.assign(new Error(packet.error.message || 'Erreur MCP Studio.'), {
+    code: 'MCP_RPC_ERROR', details: { rpcError: packet.error, stderrTail: stderrTail.slice(-4096) || null },
+  }));
   else item.resolve(packet.result);
 }
 function send(method, params = {}, timeoutMs = 15000) {
@@ -46,7 +52,9 @@ function send(method, params = {}, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);
-      reject(Object.assign(new Error(`Studio MCP : délai dépassé pour ${method}.`), { code: 'MCP_TIMEOUT' }));
+      reject(Object.assign(new Error(`Studio MCP : délai dépassé pour ${method}.`), {
+        code: 'MCP_TIMEOUT', details: { method, timeoutMs, stderrTail: stderrTail.slice(-4096) || null },
+      }));
     }, timeoutMs);
     pending.set(id, { resolve, reject, timer });
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n', (cause) => {
@@ -63,11 +71,17 @@ export async function connectStudioMcp() {
   if (!studioMcpAvailable()) throw Object.assign(new Error('Le lanceur MCP officiel Roblox Studio est introuvable dans %LOCALAPPDATA%\\Roblox\\mcp.bat.'), { code: 'MCP_LAUNCHER_NOT_FOUND' });
   if (connecting) return connecting;
   connecting = (async () => {
+    stderrTail = '';
     child = spawn('cmd.exe', ['/d', '/c', launcher], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     createInterface({ input: child.stdout }).on('line', onLine);
-    child.stderr.on('data', () => {});
+    child.stderr.on('data', (chunk) => { stderrTail = (stderrTail + String(chunk)).slice(-16384); });
     child.on('error', (cause) => { rejectAll(cause); close(); });
-    child.on('exit', () => { rejectAll(Object.assign(new Error('Le serveur MCP Studio s’est arrêté.'), { code: 'MCP_EXITED' })); close(); });
+    child.on('exit', (exitCode, signal) => {
+      rejectAll(Object.assign(new Error('Le serveur MCP Studio s’est arrêté.'), {
+        code: 'MCP_EXITED', details: { exitCode, signal, stderrTail: stderrTail.slice(-4096) || null },
+      }));
+      close();
+    });
     let initialized;
     try {
       initialized = await send('initialize', {

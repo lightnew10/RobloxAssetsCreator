@@ -79,3 +79,26 @@ Si le systeme refuse l'arret d'un processus, fermer l'application concernee (ou 
 Références : https://docs.ollama.com/capabilities/thinking ; https://github.com/ollama/ollama/issues/14645
 
 Après ce correctif, la valeur attendue de `server.buildTag` sur `http://127.0.0.1:3001/api/health` est **`model-root-repair-v2`** ; `spatial-root-repair-v1` indique une ancienne version. Après `git pull origin main`, redémarrer `start.bat` pour charger le code mis à jour.
+
+
+## Correctifs de diagnostic (octobre 2026)
+
+- Planification locale : `think:false` dès le premier appel par défaut, avec le schéma JSON existant. Activer `OLLAMA_PLANNING_THINK=true` uniquement pour tester le raisonnement explicite.
+- `OLLAMA_MAX_THINKING_ONLY_MS=90000` : garde-fou lorsque le modèle émet du `thinking` sans contenu final ; ce seuil ne remplace pas les délais maximum et d'inactivité Ollama.
+- Une réponse terminée sans `content` est `AI_EMPTY_RESPONSE` (distinct d'un JSON non parsable et d'une erreur HTTP).
+- Artefacts `ai_responses/*_invalid_raw` et `*_invalid_content` : réponse Ollama à l'origine d'un échec du schéma ; métriques de génération et motif d'arrêt disponibles dans `OLLAMA_STREAM_FINISHED`.
+- Un retry du planificateur inclut la cause de l'échec précédent, et les vrais problèmes de structure restent validés strictement (pas de parent fictif ajouté automatiquement).
+- Une génération native en échec n'est plus répétée trois fois à l'identique : en cas d'échec elle tente l'autre méthode native disponible puis bascule sur Parts uniquement si le moteur choisi est **Auto**.
+- `NATIVE_GENERATION_RESULT` et `variant.native_method_failed` décrivent le `status`, le `jobId`, la méthode, et la cause réellement renvoyée par Roblox si elle existe.
+- Le processus MCP conserve les derniers messages `stderr` (bornés). Pour les réponses `Failed` sans motif renvoyé, le diagnostic indique explicitement que la cause est **inconnue**, au lieu de la deviner.
+- La page Activité donne accès à **Détails techniques**, et l'interface identifie l'API avec le tag `ollama-native-diagnostics-v3`.
+
+### Procédure de test
+
+1. Fermer les anciennes instances, `git pull origin main`, `start.bat` ; vérifier le tag API.
+2. Tester **Parts** avec un cocotier et vérifier le plan, les 3 variantes et les captures.
+3. Tester **Auto** : en cas d'échec natif, ouvrir **Détails techniques** sous `variant.native_method_failed` puis FULL TRACE et les artefacts `studio/*_response`.
+4. Consulter `OLLAMA_REQUEST_SETTINGS` et vérifier `think:false` et le schéma dans l'artefact requête.
+5. Si Roblox n'a pas fourni de motif à l'échec, transmettre la réponse `wait_job_finished`, les diagnostics MCP et la sortie de Studio. Aucun correctif local ne peut garantir la disponibilité du service Roblox.
+
+**Portée** : ces changements corrigent le chemin de diagnostic et les relances à l'identique, pas les échecs externes du service de génération Roblox. Un test de bout en bout sous Windows/Studio reste indispensable.

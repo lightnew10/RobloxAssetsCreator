@@ -78,6 +78,14 @@ export async function traceProviderEvent(event = {}) {
     const raw = await traceArtifact(runId, 'ai_responses', event.provider + '_raw', event.raw, context);
     const parsed = await traceArtifact(runId, 'ai_responses', event.provider + '_parsed', { text: event.text, parsed: event.parsed, usage: event.usage }, context);
     await traceEvent(runId, 'AI_RESPONSE', { provider: event.provider, model: event.model, rawArtifact: raw?.id, parsedArtifact: parsed?.id }, context);
+  } else if (event.kind === 'invalid_response') {
+    const raw = await traceArtifact(runId, 'ai_responses', event.provider + '_invalid_raw', event.raw, context);
+    const text = await traceArtifact(runId, 'ai_responses', event.provider + '_invalid_content', {
+      text: event.text, usage: event.usage,
+    }, context);
+    await traceEvent(runId, 'AI_INVALID_RESPONSE', {
+      provider: event.provider, model: event.model, rawArtifact: raw?.id, contentArtifact: text?.id,
+    }, context);
   } else if (event.kind === 'error') {
     const artifact = await traceArtifact(runId, 'errors', event.provider + '_error', {
       provider: event.provider, model: event.model, code: event.error?.code, message: event.error?.message, details: event.error?.details, stack: event.error?.stack,

@@ -117,12 +117,17 @@ async function drain() {
 
 async function withRecovery(jobId, stage, variantId, fn) {
   let previousIncident = null;
-  for (let pass = 0; pass < 3; pass += 1) {
+  let lastCause = null;
+  // Native generation jobs are expensive; repeating the same failed job does not fix an opaque "Failed".
+  // Try a different native method in runVariant instead of three identical MCP calls.
+  const maxPasses = stage === 'native_build' ? 1 : 3;
+  for (let pass = 0; pass < maxPasses; pass += 1) {
     try {
       const result = await fn(pass);
       if (previousIncident) await mutateJob(jobId, (job) => { markRecovered(job, previousIncident); return job; });
       return result;
     } catch (cause) {
+      lastCause = cause;
       const snapshot = await mutateJob(jobId, (job) => {
         const incident = recordIncident(job, { stage, variantId, code: cause.code || 'PIPELINE_ERROR', message: cause.message, details: cause.details });
         event(job, 'recovery.incident', cause.message, incident);
@@ -137,6 +142,8 @@ async function withRecovery(jobId, stage, variantId, fn) {
       }
     }
   }
+  // A recovery that exhausted attempts must never silently return undefined.
+  throw lastCause || Object.assign(new Error('Récupération épuisée.'), { code: 'RECOVERY_EXHAUSTED' });
 }
 
 async function analyzeReferences(job) {
@@ -162,19 +169,19 @@ async function analyzeReferences(job) {
 
 async function buildPlan(job, referenceAnalysis) {
   let structuralIssues = [];
-  let noThinkingFallback = false;
   let lastIncident = null;
+  let lastPlannerError = null;
   await mutateJob(job.id, (item) => { item.status = 'planning'; event(item, 'plan.started', 'Création du plan 3D.'); return item; });
   for (let attempt = 0; attempt < config.maxPlanAttempts; attempt += 1) {
     try {
       const response = await structuredChat({
         provider: job.planningProvider || providerFor(job),
         modelOverride: job.planningModel || '',
-        // Only disable thinking after a diagnosed empty response or stalled thinking.
-        thinkOverride: noThinkingFallback ? false : null,
+        // JSON planning is deterministic: do not burn long reasoning before answering.
+        thinkOverride: (job.planningProvider || providerFor(job)) === 'local' ? config.ollamaPlanningThink : null,
         messages: [
           { role: 'system', content: plannerSystem },
-          { role: 'user', content: plannerUser({ brief: job.brief, category: job.category, subtype: job.subtype, style: job.style, feedback: [...(job.memoryLessons || []).map((x) => ({ source: 'validated_memory', text: x.text })), ...(job.feedback || [])], previousIssues: structuralIssues }) + '\nREFERENCE_ANALYSIS=' + JSON.stringify(referenceAnalysis) },
+          { role: 'user', content: plannerUser({ brief: job.brief, category: job.category, subtype: job.subtype, style: job.style, feedback: [...(job.memoryLessons || []).map((x) => ({ source: 'validated_memory', text: x.text })), ...(job.feedback || [])], previousIssues: structuralIssues }) + '\nREFERENCE_ANALYSIS=' + JSON.stringify(referenceAnalysis) + (lastPlannerError ? '\nPREVIOUS_ATTEMPT_ERROR=' + JSON.stringify(lastPlannerError) + '\nCorrect only the identified error and return one complete JSON document.' : '') },
         ],
         schema: spatialPlanSchema,
         traceContext: { runId: job.id, phase: 'planning', attempt: attempt + 1, traceLevel: job.traceLevel },
@@ -199,7 +206,10 @@ async function buildPlan(job, referenceAnalysis) {
       if (lastIncident) await mutateJob(job.id, (item) => { markRecovered(item, lastIncident); return item; });
       return plan;
     } catch (cause) {
-      structuralIssues = cause.details || structuralIssues;
+      if (Array.isArray(cause.details)) structuralIssues = cause.details;
+      lastPlannerError = { code: cause.code || 'PLAN_FAILED',
+        message: String(cause.message || '').slice(0, 260),
+        issues: Array.isArray(cause.details) ? cause.details.slice(0, 8) : [] };
       const snapshot = await mutateJob(job.id, (item) => {
         const incident = recordIncident(item, { stage: 'planning', code: cause.code || 'PLAN_FAILED', message: cause.message, details: cause.details });
         event(item, 'plan.retry', cause.message, { attempt: attempt + 1, issues: cause.details || [] });
@@ -207,15 +217,11 @@ async function buildPlan(job, referenceAnalysis) {
       });
       lastIncident = snapshot.recovery.incidents.at(-1);
       await traceIncident(snapshot, lastIncident);
-      if ((job.planningProvider || providerFor(job)) === 'local' && !noThinkingFallback &&
-          (cause.code === 'AI_THINKING_STALLED' ||
-            (cause.code === 'AI_INVALID_JSON' && cause.details?.preview === ''))) {
-        noThinkingFallback = true;
-        await traceEvent(job.id, 'PLAN_AI_STRATEGY_CHANGED', {
-          strategy: 'ollama_think_false', reason: cause.code,
-          note: 'Fallback de récupération ; la validation du schéma JSON reste obligatoire.',
-        }, { phase: 'planning', attempt: attempt + 1, traceLevel: job.traceLevel });
-      }
+      await traceEvent(job.id, 'PLAN_RETRY_DIAGNOSTIC', {
+        reason: cause.code || 'PLAN_FAILED', nextAttempt: attempt + 2,
+        think: (job.planningProvider || providerFor(job)) === 'local' ? config.ollamaPlanningThink : null,
+        issueCount: structuralIssues.length,
+      }, { phase: 'planning', attempt: attempt + 1, traceLevel: job.traceLevel });
       // Repeating a stalled model with identical inputs and settings is not a recovery strategy.
       // Stop after a genuine Ollama timeout and let the user choose another planning model
       // or increase the configured limits; leave normal retries for schema/structure failures.
@@ -292,7 +298,11 @@ async function runVariant(jobId, variantId) {
   let engine = job.engine;
   const tools = (await listStudioTools()).map((x) => x.name);
   if (engine === 'auto') engine = tools.includes(job.plan.nativeMethod) && tools.includes('wait_job_finished') ? 'native' : 'parts';
-  if (engine === 'native' && !tools.includes(job.plan.nativeMethod)) engine = 'parts';
+  if (engine === 'native' && (!tools.includes(job.plan.nativeMethod) || !tools.includes('wait_job_finished'))) {
+    throw Object.assign(new Error('La génération native demandée nécessite ' + job.plan.nativeMethod + ' et wait_job_finished dans le serveur MCP Roblox.'), {
+      code: 'NATIVE_TOOL_UNAVAILABLE', details: { nativeMethod: job.plan.nativeMethod, availableTools: tools },
+    });
+  }
 
   if (engine === 'parts') {
     const generated = await makeGeometry(job, variant);
@@ -302,7 +312,38 @@ async function runVariant(jobId, variantId) {
     await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.bounds=bounds; v.engineUsed='parts'; v.status='auditing'; event(item,'variant.built','Variante construite par Parts.',{variantId}); return item; });
   } else {
     try {
-      const bounds = await withRecovery(jobId, 'native_build', variantId, () => buildNativeVariant(job, variant));
+      // If the preferred native generator fails, try a different supported generator once.
+      // Never run three identical expensive native jobs whose previous result was "Failed".
+      const alternatives = [job.plan.nativeMethod, job.plan.nativeMethod === 'generate_mesh' ? 'generate_procedural_model' : 'generate_mesh']
+        .filter((method, index, methods) => tools.includes(method) && methods.indexOf(method) === index);
+      let bounds = null;
+      let lastNativeError = null;
+      for (const method of alternatives) {
+        try {
+          bounds = await withRecovery(jobId, 'native_build', variantId,
+            () => buildNativeVariant(job, variant, { methodOverride: method }));
+          break;
+        } catch (cause) {
+          lastNativeError = cause;
+          await mutateJob(jobId, (item) => {
+            event(item, 'variant.native_method_failed',
+              'Méthode ' + method + ' échouée : ' + cause.message,
+              { variantId, method, code: cause.code, details: {
+                status: cause.details?.status || null,
+                reason: cause.details?.reason || null,
+                mcpDiagnostics: cause.details?.mcpDiagnostics || null,
+              } });
+            return item;
+          });
+          if (['STUDIO_ACCESS_REQUIRED', 'STUDIO_NOT_CONNECTED', 'MCP_NOT_CONNECTED', 'MCP_EXITED'].includes(cause.code)) break;
+        }
+      }
+      if (!bounds) throw lastNativeError || Object.assign(new Error('Aucune méthode native utilisable.'), { code: 'NATIVE_METHOD_UNAVAILABLE' });
+      if (lastNativeError) await mutateJob(jobId, (item) => {
+        const previous = item.recovery?.incidents?.at(-1);
+        if (previous?.stage === 'native_build' && previous?.variantId === variantId) markRecovered(item, previous);
+        return item;
+      });
       await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.bounds=bounds; v.engineUsed='native'; v.status='auditing'; event(item,'variant.built','Variante générée nativement par Roblox.',{variantId,method:bounds.nativeMethod}); return item; });
     } catch (cause) {
       if (job.engine !== 'auto') throw cause;
