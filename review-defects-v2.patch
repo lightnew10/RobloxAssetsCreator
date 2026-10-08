@@ -1,0 +1,211 @@
+diff --git a/server/src/review/defectRules.json b/server/src/review/defectRules.json
+new file mode 100644
+index 0000000..3b8bdc0
+--- /dev/null
++++ b/server/src/review/defectRules.json
+@@ -0,0 +1,39 @@
++{
++  "version": 2,
++  "vocabulary": {
++    "shape": ["too_round", "not_round_enough", "too_straight", "too_bent", "wrong_proportion", "too_thin", "too_thick", "asymmetric_bad"],
++    "detail": ["too_few_details", "too_many_details", "visible_segment_seams", "details_below_min_size"],
++    "count": ["too_few_leaves", "too_many_leaves", "too_few_parts", "too_many_parts"],
++    "texture": ["texture_too_flat", "texture_too_noisy", "colors_too_similar", "colors_too_saturated"],
++    "component": ["missing_component", "misplaced_component", "floating_component", "overlap_bad"],
++    "silhouette": ["unreadable_silhouette", "variants_too_similar"]
++  },
++  "rules": {
++    "too_few_leaves":        { "action": "param", "role": "count",     "direction": "increase", "ratio": 0.15 },
++    "too_many_leaves":       { "action": "param", "role": "count",     "direction": "decrease", "ratio": 0.15 },
++    "too_few_parts":         { "action": "param", "role": "count",     "direction": "increase", "ratio": 0.15 },
++    "too_many_parts":        { "action": "param", "role": "count",     "direction": "decrease", "ratio": 0.15 },
++    "too_few_details":       { "action": "param", "role": "detail",    "direction": "increase", "ratio": 0.2 },
++    "too_many_details":      { "action": "param", "role": "detail",    "direction": "decrease", "ratio": 0.2 },
++    "visible_segment_seams": { "action": "param", "role": "detail",    "direction": "increase", "ratio": 0.2 },
++    "details_below_min_size":{ "action": "param", "role": "detail",    "direction": "decrease", "ratio": 0.15 },
++    "too_straight":          { "action": "param", "role": "curvature", "direction": "increase", "ratio": 0.2 },
++    "too_bent":              { "action": "param", "role": "curvature", "direction": "decrease", "ratio": 0.2 },
++    "too_thin":              { "action": "param", "role": "radius",    "direction": "increase", "ratio": 0.15 },
++    "too_thick":             { "action": "param", "role": "radius",    "direction": "decrease", "ratio": 0.15 },
++    "too_round":             { "action": "param", "role": "angularity", "direction": "increase", "ratio": 0.2 },
++    "not_round_enough":      { "action": "param", "role": "angularity", "direction": "decrease", "ratio": 0.2 },
++    "wrong_proportion":      { "action": "instruct" },
++    "asymmetric_bad":        { "action": "instruct" },
++    "texture_too_flat":      { "action": "instruct" },
++    "texture_too_noisy":     { "action": "instruct" },
++    "colors_too_similar":    { "action": "instruct" },
++    "colors_too_saturated":  { "action": "instruct" },
++    "unreadable_silhouette": { "action": "instruct" },
++    "variants_too_similar":  { "action": "instruct" },
++    "missing_component":     { "action": "rebuild" },
++    "misplaced_component":   { "action": "rebuild" },
++    "floating_component":    { "action": "rebuild" },
++    "overlap_bad":           { "action": "rebuild" }
++  }
++}
+diff --git a/server/src/review/defects.js b/server/src/review/defects.js
+new file mode 100644
+index 0000000..f6dc546
+--- /dev/null
++++ b/server/src/review/defects.js
+@@ -0,0 +1,84 @@
++import { readFileSync } from 'node:fs';
++import { fileURLToPath } from 'node:url';
++
++const load = (name) => JSON.parse(readFileSync(fileURLToPath(new URL(name, import.meta.url)), 'utf8'));
++const rules = load('./defectRules.json');
++const roles = load('./paramRoles.json');
++export const SEVERITIES = ['low', 'medium', 'high', 'critical'];
++export const ALLOWED_ISSUES = new Set(Object.values(rules.vocabulary).flat());
++
++// Ramène une revue IA au vocabulaire fermé. Un défaut inconnu n'est jamais accepté tel quel.
++export function normalizeReview(review) {
++  const problems = Array.isArray(review?.problems) ? review.problems : [];
++  return {
++    score: Number(review?.score) || 0,
++    defects: problems.map((p) => {
++      const issue = String(p?.issue || '').trim();
++      const known = ALLOWED_ISSUES.has(issue);
++      return {
++        component: String(p?.component || 'unknown').slice(0, 64),
++        issue: known ? issue : 'unknown_issue',
++        rawIssue: issue.slice(0, 120),
++        severity: SEVERITIES.includes(p?.severity) ? p.severity : 'medium',
++        status: known ? 'valid' : 'rejected_vocabulary',
++      };
++    }),
++  };
++}
++
++// Trouve le paramètre qui porte un rôle donné pour un archétype, en lisant ses bornes dans le schéma.
++function paramForRole(archetypeId, role, schema) {
++  const declared = roles.archetypes[archetypeId] || {};
++  const key = Object.keys(declared).find((k) => declared[k] === role && schema.properties?.[k]);
++  if (!key) return null;
++  const spec = schema.properties[key];
++  return { key, min: spec.minimum, max: spec.maximum, integer: spec.type === 'integer' };
++}
++
++// Décide, pour chaque défaut valide, de l'action : modifier un paramètre, demander une réécriture
++// ciblée au décomposeur (instruct), ou reconstruire (rebuild). Aucune règle ne dépend de l'objet.
++export function planCorrections(defects, archetypeId, schema) {
++  const changes = [], instructions = [], rebuilds = [], missing = [];
++  for (const d of defects.filter((x) => x.status === 'valid')) {
++    const rule = rules.rules[d.issue];
++    if (!rule) { missing.push({ issue: d.issue, reason: 'no_rule' }); continue; }
++    if (rule.action === 'rebuild') { rebuilds.push(d); continue; }
++    if (rule.action === 'instruct') { instructions.push({ issue: d.issue, component: d.component }); continue; }
++    const p = schema ? paramForRole(archetypeId, rule.role, schema) : null;
++    if (!p) { missing.push({ issue: d.issue, component: d.component, reason: 'needs_param_role', role: rule.role }); instructions.push({ issue: d.issue, component: d.component }); continue; }
++    changes.push({ issue: d.issue, param: p.key, direction: rule.direction, step: rule.ratio * (p.max - p.min), integer: p.integer, min: p.min, max: p.max });
++  }
++  return { changes, instructions, rebuilds, missing };
++}
++
++// Une seule correction à la fois, bornée par le schéma du paramètre.
++export function applyOneChange(params, change) {
++  const sign = change.direction === 'increase' ? 1 : -1;
++  const raw = (Number(params[change.param]) || 0) + sign * change.step;
++  const next = Math.min(change.max, Math.max(change.min, raw));
++  return { ...params, [change.param]: change.integer ? Math.max(change.min, Math.round(next)) : Number(next.toFixed(4)) };
++}
++
++// Garde une correction seulement si elle améliore la note sans créer de défaut grave nouveau.
++export function keepCorrection(before, after, minGain = 0.5) {
++  const newSerious = after.defects.filter((d) => d.status === 'valid' && ['high', 'critical'].includes(d.severity)
++    && !before.defects.some((b) => b.issue === d.issue && b.component === d.component));
++  const gain = after.score - before.score;
++  if (newSerious.length) return { keep: false, reason: 'new_serious_defect', gain };
++  if (gain < minGain) return { keep: false, reason: 'insufficient_gain', gain };
++  return { keep: true, reason: 'improved', gain };
++}
++
++// Arrêt : accepté à 8 sans défaut grave, ou stagnation sur trois versions consécutives.
++export function shouldStop(history, { acceptScore = 8, minGain = 0.5 } = {}) {
++  const last = history[history.length - 1];
++  if (!last) return { stop: false };
++  if (last.score >= acceptScore && !last.defects.some((d) => d.status === 'valid' && ['high', 'critical'].includes(d.severity))) {
++    return { stop: true, reason: 'accepted' };
++  }
++  if (history.length >= 3) {
++    const [a, b, c] = history.slice(-3);
++    if (b.score - a.score < minGain && c.score - b.score < minGain) return { stop: true, reason: 'stagnation' };
++  }
++  return { stop: false };
++}
+diff --git a/server/src/review/paramRoles.json b/server/src/review/paramRoles.json
+new file mode 100644
+index 0000000..07cc8bb
+--- /dev/null
++++ b/server/src/review/paramRoles.json
+@@ -0,0 +1,9 @@
++{
++  "version": 1,
++  "archetypes": {
++    "palmTree": { "frondCount": "count", "segments": "detail", "curvature": "curvature", "baseRadius": "radius", "frondLength": "radius" },
++    "broadleaf": { "branchCount": "count", "segments": "detail", "curvature": "curvature", "baseRadius": "radius", "crownWidth": "radius" },
++    "rock": { "lumps": "detail", "roughness": "angularity" },
++    "house": { "roofSlope": "curvature" }
++  }
++}
+diff --git a/server/test/defects.test.js b/server/test/defects.test.js
+new file mode 100644
+index 0000000..b41299c
+--- /dev/null
++++ b/server/test/defects.test.js
+@@ -0,0 +1,55 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { normalizeReview, planCorrections, applyOneChange, keepCorrection, shouldStop } from '../src/review/defects.js';
++import { archetypes } from '../src/archetypes/index.js';
++
++const schemaOf = (id) => archetypes[id].schema;
++const review = (issue, severity = 'high', component = 'x') => normalizeReview({ score: 5, problems: [{ component, issue, severity }] });
++
++test('vocabulaire hors liste : rejeté, aucune correction', () => {
++  const r = review('le tronc a une bizarrerie');
++  assert.equal(r.defects[0].status, 'rejected_vocabulary');
++  assert.equal(planCorrections(r.defects, 'palmTree', schemaOf('palmTree')).changes.length, 0);
++});
++
++test('palmier : manque de feuilles → frondCount augmente, borné', () => {
++  const { changes } = planCorrections(review('too_few_leaves').defects, 'palmTree', schemaOf('palmTree'));
++  assert.equal(changes[0].param, 'frondCount');
++  assert.equal(applyOneChange({ frondCount: 19 }, changes[0]).frondCount, 20);
++});
++
++test('rocher : trop rond → roughness augmente (rôle angularity)', () => {
++  const { changes } = planCorrections(review('too_round').defects, 'rock', schemaOf('rock'));
++  assert.equal(changes[0].param, 'roughness');
++  assert.equal(changes[0].direction, 'increase');
++});
++
++test('texture : pas de paramètre numérique → instruction au décomposeur, pas de changement aveugle', () => {
++  const plan = planCorrections(review('texture_too_flat').defects, 'palmTree', schemaOf('palmTree'));
++  assert.equal(plan.changes.length, 0);
++  assert.equal(plan.instructions.length, 1);
++});
++
++test('défaut structurel → reconstruction, pas de paramètre', () => {
++  const plan = planCorrections(review('floating_component').defects, 'house', schemaOf('house'));
++  assert.equal(plan.rebuilds.length, 1);
++});
++
++test('objet non enregistré (voiture) : même logique, sans code spécifique', () => {
++  const car = { type: 'object', properties: { wheelCount: { type: 'integer', minimum: 4, maximum: 8 } } };
++  const plan = planCorrections(review('too_few_details').defects, 'car', car);
++  assert.equal(plan.missing[0].reason, 'needs_param_role');
++  assert.equal(plan.instructions.length, 1);
++});
++
++test('gain insuffisant ou nouveau défaut grave : correction annulée', () => {
++  const before = { score: 6, defects: [] };
++  assert.equal(keepCorrection(before, { score: 6.2, defects: [] }).keep, false);
++  const after = { score: 7.5, defects: [{ component: 'trunk', issue: 'floating_component', severity: 'critical', status: 'valid' }] };
++  assert.equal(keepCorrection(before, after).reason, 'new_serious_defect');
++});
++
++test('arrêt : accepté à 8, ou stagnation sur trois versions', () => {
++  assert.equal(shouldStop([{ score: 8, defects: [] }]).reason, 'accepted');
++  assert.equal(shouldStop([6, 6.2, 6.3].map((score) => ({ score, defects: [] }))).reason, 'stagnation');
++});
