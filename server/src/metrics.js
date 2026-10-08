@@ -6,11 +6,17 @@ let queue=Promise.resolve();
 export function createVariantMetric(job,variant){
   const start=Date.parse(variant.startedAt||variant.createdAt||job.createdAt);
   const end=Date.parse(variant.finishedAt||new Date().toISOString());
+  const lookup=new Map((job.variants||[]).map(v=>[v.id,v]));
+  let correctionRound=0,ancestor=variant.correctionOf,seen=new Set([variant.id]);
+  while(ancestor && lookup.has(ancestor) && !seen.has(ancestor)){
+    seen.add(ancestor);correctionRound++;ancestor=lookup.get(ancestor).correctionOf;
+  }
+  const descendantCorrections=(job.variants||[]).filter(x=>x.correctionOf===variant.id).length;
   return {
     at:new Date(end).toISOString(),jobId:job.id,variantId:variant.id,
     engineUsed:variant.engineUsed||null,archetype:variant.geometryDefinition?.archetype||null,
-    corrections:job.variants?.filter(x=>x.correctionOf===variant.id).length||0,
-    correctionRound:variant.correctionOf?1:0,finalScore:Number.isFinite(variant.review?.score)?variant.review.score:null,
+    corrections:Math.max(correctionRound,descendantCorrections),
+    correctionRound,finalScore:Number.isFinite(variant.review?.score)?variant.review.score:null,
     durationMs:Number.isFinite(end-start)?Math.max(0,end-start):null,
   };
 }
