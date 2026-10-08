@@ -6,6 +6,7 @@ function family(code = '', details = []) {
   const detailCodes = (Array.isArray(details) ? details : [details]).map((x) => String(x?.code || '').toLowerCase());
   if (upper.includes('SPATIAL') || detailCodes.some((x) => ['missing_parent','ambiguous_parent','self_parent','parent_cycle'].includes(x))) return 'spatial_structure';
   if (upper.includes('JSON') || upper.includes('SCHEMA')) return 'structured_output';
+  if (upper.includes('NATIVE')) return 'native_generation';
   if (upper.includes('MCP') || upper.includes('STUDIO')) return 'studio';
   if (upper.includes('CAPTURE')) return 'capture';
   if (upper.includes('TIMEOUT')) return 'timeout';
@@ -28,7 +29,7 @@ export function recordIncident(job, context = {}) {
   state.lastSignature = sig;
   state.consecutive[sig] = attempt;
   const kind = family(context.code, context.details);
-  const action = attempt >= 3 ? 'stop' : kind === 'spatial_structure' && attempt === 1 ? 'repair_then_retry' : kind === 'spatial_structure' ? 'targeted_replan' : attempt === 1 ? 'retry' : 'switch_strategy';
+  const action = attempt >= 3 ? 'stop' : context.stage === 'native_build' ? 'alternate_native_method_or_parts' : kind === 'spatial_structure' && attempt === 1 ? 'repair_then_retry' : kind === 'spatial_structure' ? 'targeted_replan' : attempt === 1 ? 'retry' : 'switch_strategy';
   const incident = {
     id: randomUUID(), at: new Date().toISOString(), stage: context.stage || null, variantId: context.variantId || null,
     code: context.code || null, message: context.message || null, family: kind, signature: sig, attempt, action,
