@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
-import { getProviderRuntime, getVisionRuntime } from './providerSettings.js';
+import { getGenerationMode, getProviderRuntime, getVisionRuntime } from './providerSettings.js';
+import { engineForGenerationMode, engineForJob, generationModeForJob, generationSourceForEngine } from './generationMode.js';
 import { structuredChat, visionStructuredChat } from './providers.js';
 import { normalizeSpatialPlan, spatialPlanSchema } from './spatialPlan.js';
 import { fallbackGeometry, geometryAudit, geometrySchema, normalizeGeometry, seedFor, variationProfiles } from './geometry.js';
@@ -69,13 +70,17 @@ export async function createAssetJob(input = {}) {
   const visionProvider = input.visionProvider || getVisionRuntime().provider;
   if (provider !== 'local' && !getProviderRuntime(provider).apiKey) throw Object.assign(new Error('Clé API manquante pour ' + provider + '.'), { code: 'PROVIDER_KEY_REQUIRED' });
   if (planningProvider !== 'local' && !getProviderRuntime(planningProvider).apiKey) throw Object.assign(new Error('Clé API manquante pour le planificateur ' + planningProvider + '.'), { code: 'PROVIDER_KEY_REQUIRED' });
+  // The server preference is authoritative: an old frontend cannot bypass local-only
+  // by sending engine:"auto" or "native".
+  const generationMode = getGenerationMode();
+  const engine = engineForGenerationMode(generationMode);
   const id = randomUUID();
   const target = Math.max(1, Math.min(config.maxVariants, Number(input.variantTarget) || 3));
   const memoryLessons = await relevantLessons({ name, category: input.category || 'prop', subtype: input.subtype || '' });
   const job = {
     schemaVersion: 1, id, name, brief, category: bounded(input.category || 'prop', 80), subtype: bounded(input.subtype, 80),
     style: bounded(input.style || 'stylized Roblox', 300), studioId, provider, visionProvider, planningProvider, planningModel,
-    engine: ['auto','parts','native'].includes(input.engine) ? input.engine : 'auto',
+    generationMode, engine,
     variantTarget: target, traceLevel: input.traceLevel === 'off' ? 'off' : 'full',
     qualityPolicy: { initialVariants: target, autoAcceptScore: 8, essentialAcceptMinScore: 8, humanReviewMinScore: 5, essentialReviewMinScore: 5, maxPatchesPerCandidate: 2, maxRebuildsPerObject: 1, maxAttemptsPerObject: 9 },
     autoRebuilds: 0,
@@ -84,7 +89,10 @@ export async function createAssetJob(input = {}) {
     status: 'queued', error: null, stopRequested: false, pendingCorrection: null, recovery: null, events: [],
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
-  event(job, 'job.created', 'Job de création créé.', { provider, planningProvider, planningModel: planningModel || null, visionProvider, engine: job.engine, variantTarget: target });
+  event(job, 'job.created', 'Job de création créé.', {
+    provider, planningProvider, planningModel: planningModel || null, visionProvider,
+    generationMode, engine, variantTarget: target,
+  });
   await saveJob(job);
   await traceArtifact(id, 'inputs', 'job_request', { ...job, referenceImages: job.referenceImages.map((x) => ({ dataUrlBytes: x.length })) }, { phase: 'input' });
   for (let index = 0; index < job.referenceImages.length; index += 1) {
@@ -295,7 +303,13 @@ async function runVariant(jobId, variantId) {
   await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.status='generating'; event(item,'variant.generating',v.profile.label,{variantId}); return item; });
   job = await getJob(jobId); variant = job.variants.find((x) => x.id === variantId);
 
-  let engine = job.engine;
+  const selectedMode = generationModeForJob(job);
+  let engine = engineForJob(job);
+  // A job's mode is fixed when it is created; changing settings cannot silently
+  // switch the geometry engine of a queued, resumed, or corrected job.
+  await traceEvent(job.id, 'GENERATION_MODE_SELECTED', {
+    mode: selectedMode, requestedEngine: engine, variantId,
+  }, { phase: 'generation', variantId, traceLevel: job.traceLevel });
   const tools = (await listStudioTools()).map((x) => x.name);
   if (engine === 'auto') engine = tools.includes(job.plan.nativeMethod) && tools.includes('wait_job_finished') ? 'native' : 'parts';
   if (engine === 'native' && (!tools.includes(job.plan.nativeMethod) || !tools.includes('wait_job_finished'))) {
@@ -309,7 +323,7 @@ async function runVariant(jobId, variantId) {
     await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.geometry=generated.geometry; v.geometryAudit=generated.audit; v.generation=generated.generation; v.status='building'; return item; });
     job = await getJob(jobId); variant = job.variants.find((x) => x.id === variantId);
     const bounds = await withRecovery(jobId, 'studio_build', variantId, () => buildPartsVariant(job, variant));
-    await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.bounds=bounds; v.engineUsed='parts'; v.status='auditing'; event(item,'variant.built','Variante construite par Parts.',{variantId}); return item; });
+    await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.bounds=bounds; v.engineUsed='parts'; v.generationSource='local_parts'; v.status='auditing'; event(item,'variant.built','Variante construite par Parts.',{variantId}); return item; });
   } else {
     try {
       // If the preferred native generator fails, try a different supported generator once.
@@ -344,16 +358,16 @@ async function runVariant(jobId, variantId) {
         if (previous?.stage === 'native_build' && previous?.variantId === variantId) markRecovered(item, previous);
         return item;
       });
-      await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.bounds=bounds; v.engineUsed='native'; v.status='auditing'; event(item,'variant.built','Variante générée nativement par Roblox.',{variantId,method:bounds.nativeMethod}); return item; });
+      await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.bounds=bounds; v.engineUsed='native'; v.generationSource='roblox_native'; v.status='auditing'; event(item,'variant.built','Variante générée nativement par Roblox.',{variantId,method:bounds.nativeMethod}); return item; });
     } catch (cause) {
-      if (job.engine !== 'auto') throw cause;
+      if (engineForJob(job) !== 'auto') throw cause;
       await mutateJob(jobId, (item) => { event(item,'variant.native_fallback','Génération native indisponible, repli Parts.',{variantId,reason:cause.message}); return item; });
       job = await getJob(jobId); variant = job.variants.find((x) => x.id === variantId);
       const generated = await makeGeometry(job, variant);
       await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.geometry=generated.geometry; v.geometryAudit=generated.audit; v.generation=generated.generation; v.status='building'; return item; });
       job = await getJob(jobId); variant = job.variants.find((x) => x.id === variantId);
       const bounds = await withRecovery(jobId, 'studio_build', variantId, () => buildPartsVariant(job, variant));
-      await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.bounds=bounds; v.engineUsed='parts_fallback'; v.status='auditing'; return item; });
+      await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.bounds=bounds; v.engineUsed='parts_fallback'; v.generationSource='local_parts'; v.status='auditing'; return item; });
     }
   }
 
@@ -377,7 +391,9 @@ async function runVariant(jobId, variantId) {
     const v=item.variants.find((x)=>x.id===variantId);
     delete v._captureData;
     v.review=review; v.status='done'; v.finishedAt=new Date().toISOString();
-    event(item,'variant.done',review ? `Variante terminée · ${Number(review.score).toFixed(1)}/10` : 'Variante terminée · critique IA indisponible',{variantId});
+    event(item,'variant.done',review ? `Variante terminée · ${Number(review.score).toFixed(1)}/10` : 'Variante terminée · critique IA indisponible',{
+      variantId, engineUsed: v.engineUsed, generationSource: v.generationSource || generationSourceForEngine(v.engineUsed),
+    });
     return item;
   });
 }
@@ -386,7 +402,7 @@ function createVariant(job, order, extra = {}) {
   const profile = variationProfiles[order % variationProfiles.length];
   return {
     id: randomUUID(), order, profile, planVersion: job.planVersion, status: 'pending',
-    geometry: null, bounds: null, technicalAudit: null, captures: [], review: null, engineUsed: null,
+    geometry: null, bounds: null, technicalAudit: null, captures: [], review: null, engineUsed: null, generationSource: null,
     createdAt: new Date().toISOString(), ...extra,
   };
 }
@@ -500,7 +516,7 @@ async function runJob(id) {
   let job = await getJob(id);
   if (!job || job.stopRequested || ['review_ready','saved','stopped'].includes(job.status)) return;
   try {
-    await traceEvent(id, 'JOB_STARTED', { name: job.name, provider: job.provider, engine: job.engine }, { phase: 'job' });
+    await traceEvent(id, 'JOB_STARTED', { name: job.name, provider: job.provider, generationMode: generationModeForJob(job), engine: engineForJob(job) }, { phase: 'job' });
     if (job.pendingCorrection?.mode === 'patch') await runPatch(job, job.pendingCorrection);
     else {
       if (job.pendingCorrection?.mode === 'rebuild') {

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
+import { GENERATION_MODES, normalizeGenerationMode } from './generationMode.js';
 
 const file = path.join(config.dataRoot, 'provider-settings.json');
 export const providerIds = ['local', 'openai', 'claude', 'deepseek', 'gemini', 'openrouter'];
@@ -17,6 +18,7 @@ function defaults() {
   return {
     selectedProvider: 'local',
     selectedVisionProvider: 'local',
+    generationMode: 'local',
     providers: Object.fromEntries(providerIds.map((id) => [id, { ...defaultsById[id] }])),
   };
 }
@@ -28,6 +30,8 @@ function load() {
     const parsed = JSON.parse(readFileSync(file, 'utf8'));
     if (providerIds.includes(parsed.selectedProvider)) base.selectedProvider = parsed.selectedProvider;
     if (providerIds.includes(parsed.selectedVisionProvider)) base.selectedVisionProvider = parsed.selectedVisionProvider;
+    // An existing settings file without this field always migrates to local-only.
+    base.generationMode = normalizeGenerationMode(parsed.generationMode);
     for (const id of providerIds) {
       base.providers[id] = { ...base.providers[id], ...(parsed.providers?.[id] || {}) };
     }
@@ -56,8 +60,13 @@ export function getProviderSettings() {
   return {
     selectedProvider: state.selectedProvider,
     selectedVisionProvider: state.selectedVisionProvider,
+    generationMode: normalizeGenerationMode(state.generationMode),
     providers: Object.fromEntries(providerIds.map((id) => [id, publicEntry(id, state.providers[id])])),
   };
+}
+
+export function getGenerationMode() {
+  return normalizeGenerationMode(state.generationMode);
 }
 
 export function getProviderRuntime(id = state.selectedProvider) {
@@ -71,6 +80,12 @@ export function getVisionRuntime(id = state.selectedVisionProvider) {
 }
 
 export function updateProviderSettings(input = {}) {
+  if (input.generationMode !== undefined) {
+    if (!GENERATION_MODES.includes(input.generationMode)) {
+      throw Object.assign(new Error('Mode de génération inconnu.'), { code: 'GENERATION_MODE_INVALID' });
+    }
+    state.generationMode = input.generationMode;
+  }
   if (input.selectedProvider !== undefined) {
     if (!providerIds.includes(input.selectedProvider)) throw Object.assign(new Error('Provider inconnu.'), { code: 'PROVIDER_INVALID' });
     state.selectedProvider = input.selectedProvider;

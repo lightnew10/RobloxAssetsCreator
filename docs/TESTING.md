@@ -116,3 +116,12 @@ Ne copie jamais ta clé API dans un message.
 ## Test additionnel — version diagnostic v3
 
 Rejouer le même cocotier avec **Auto**, puis vérifier `API ollama-native-diagnostics-v3`, `OLLAMA_REQUEST_SETTINGS`, les erreurs natives détaillées, et le repli Parts si le service natif refuse. La validation locale doit être faite après la mise à jour depuis `main`.
+
+## Test — Mode de génération (séparation stricte)
+
+1. Mettre à jour `main` et ouvrir **Paramètres IA**. Le choix initial doit être **Sans IA Roblox**, même si un ancien fichier de paramètres ne contient pas la nouvelle clé.
+2. Créer un cocotier avec les paramètres par défaut. Vérifier `job.generationMode=local`, `job.engine=parts`, `variant.engineUsed=parts` et l'absence totale de `generate_mesh` / `generate_procedural_model` dans les requêtes Studio.
+3. Sélectionner **IA Roblox uniquement** et créer un nouveau job. Attendu : `job.engine=native`. En cas de `Failed`, une erreur native détaillée doit être visible, **sans** repli Parts.
+4. Sélectionner **Local + IA Roblox** puis créer un job. Attendu : `job.engine=auto`, génération native si disponible, repli Parts si nécessaire, avec source effective visible sur chaque variante.
+5. Vérifier que les scores locaux et natifs sont présentés séparément et qu'un changement des paramètres n'affecte pas le moteur d'un job créé auparavant.
+6. Revenir à **Sans IA Roblox** avant de comparer notre générateur local à la référence Roblox.

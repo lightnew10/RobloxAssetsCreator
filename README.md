@@ -30,7 +30,7 @@ Pré-requis : Node.js 20.19+, Roblox Studio récent, et sous Windows le serveur 
    - `npm run dev:web`
 3. Ouvrir `http://127.0.0.1:5173`.
 4. Autoriser la fenêtre Roblox Studio dans l'interface.
-5. Configurer le provider IA dans **Paramètres IA**.
+5. Configurer le provider IA et le mode de génération 3D dans **Paramètres IA**. Sans changement, la génération IA native Roblox est désactivée.
 6. Décrire l'asset et lancer la création.
 
 Les données runtime, clés et traces restent locales dans `data/` et sont ignorées par Git.
@@ -40,3 +40,17 @@ Les données runtime, clés et traces restent locales dans `data/` et sont ignor
 `Brief → Plan 3D → Validation/repair → Variantes → Construction Studio → Audit technique → Captures → Critique IA → Correction → Review humaine → Sauvegarde`
 
 Le projet ne contient volontairement ni système de jeu, ni map builder, ni workflow MyRGame général : uniquement la création d'assets 3D.
+
+## Choix du générateur 3D
+
+Dans **Paramètres IA** (en haut à droite), choisir le comportement des **nouvelles créations** :
+
+- **Sans IA Roblox** (défaut) : le modèle configuré planifie la géométrie, le pipeline construit des Parts dans Roblox Studio via MCP. Aucun appel aux outils de génération IA native de Roblox.
+- **IA Roblox uniquement** : les outils `generate_mesh` / `generate_procedural_model` de Roblox produisent la géométrie. Pas de repli vers Parts si la génération native échoue. Le modèle texte/vision configuré peut toujours participer à la planification et à la critique.
+- **Local + IA Roblox** : essaie le générateur natif disponible, et se replie vers notre géométrie Parts lorsque nécessaire.
+
+La préférence est sauvegardée dans `data/provider-settings.json` et appliquée côté serveur. Un ancien formulaire ne peut pas la contourner en envoyant un moteur différent. Chaque job fige son mode à la création ; modifier le réglage ne change pas les créations existantes.
+
+Les variantes conservent `engineUsed` et `generationSource` : `roblox_native` ou `local_parts`. Les moyennes de notes sont affichées séparément pour chaque moteur afin d'éviter d'attribuer les performances de Roblox à notre pipeline local.
+
+**Important :** « Sans IA Roblox » désactive la **génération géométrique native**, pas l'utilisation de Roblox Studio comme outil de construction et de capture. Le fournisseur IA texte/vision reste configurable séparément.
