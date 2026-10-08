@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { resolveStudioSelection } from './studioSelection.js';
+import CorrectionQuestions from './CorrectionQuestions.jsx';
 
 const providers = ['local','openai','claude','deepseek','gemini','openrouter'];
 const generationModes = [
@@ -27,7 +28,7 @@ const defectLabels = {
 };
 const statusLabel = {
   queued:'En attente',understanding:'Analyse référence',planning:'Planification',generating:'Génération',
-  review_ready:'À valider',awaiting_decomposition_review:'Inventaire à valider',saved:'Sauvegardé',failed:'Erreur',stopped:'Arrêté',interrupted:'Interrompu'
+  review_ready:'À valider',clarifying_correction:'Clarification IA',awaiting_correction_answers:'L’IA attend ta réponse',awaiting_decomposition_review:'Inventaire à valider',saved:'Sauvegardé',failed:'Erreur',stopped:'Arrêté',interrupted:'Interrompu'
 };
 
 function ProviderSettings({settings,onClose,onReload}) {
@@ -403,6 +404,8 @@ export default function App(){
     <header className="topbar"><div className="brand"><div className="logo">R</div><div><strong>Roblox Assets Creator</strong><span>3D pipeline standalone</span></div></div><div className="top-actions"><span title="Version du serveur API sur le port 3001">API {health?.server?.buildTag||'ancienne version / inconnue'}</span><span className={'status '+(health?.providers?.local?.ok?'online':'offline')}>Ollama {health?.providers?.local?.ok?'online':'offline'}</span><button onClick={()=>setSettingsOpen(true)}>⚙ Paramètres IA</button></div></header>
     <main>
       {fatal&&<div className="error global">{fatal}</div>}
+      {jobs.filter(job => job.pendingCorrection?.clarification?.state === 'waiting').map((job, index) =>
+        <CorrectionQuestions key={job.pendingCorrection.id} job={job} api={api} onRefresh={refresh} autoOpen={index === 0}/>)}
       <div className="dashboard-grid">
         <StudioPanel studio={health?.studio} onRefresh={refresh}/>
         <CreatePanel settings={settings} studio={health?.studio} onCreated={job=>{setSelectedId(job.id);setShowAllReviews(false);refresh()}}/>

@@ -94,7 +94,8 @@ function partNames(job) {
 
 function nativePrompt(job, variant) {
   const essentials = (job.plan?.essentialCriteria || []).join('; ');
-  return `${job.brief}. Style: ${job.style || 'stylized Roblox'}. Variation ${variant.profile.label}: ${variant.profile.instruction}. Essential visual criteria: ${essentials}. Clean static Roblox asset, coherent proportions, separated readable parts, no text, no scripts.`;
+  const correction = variant.correctionRequest?.text ? ` User correction and answers: ${variant.correctionRequest.text}.` : '';
+  return `${job.brief}. Style: ${job.style || 'stylized Roblox'}. Variation ${variant.profile.label}: ${variant.profile.instruction}.${correction} Essential visual criteria: ${essentials}. Clean static Roblox asset, coherent proportions, separated readable parts, no text, no scripts.`;
 }
 
 function nativeMoveCode(job, variant, source) {

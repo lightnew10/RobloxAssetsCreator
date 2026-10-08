@@ -13,6 +13,7 @@ Transformer un brief d'asset (ex. cocotier, cerisier, rocher, maison, mobilier) 
 - captures Studio multi-vues ;
 - critique visuelle IA ;
 - boucle de correction ;
+- corrections patch/rebuild depuis une variante source, avec historique, revue ciblée et validation humaine des exemples ;
 - sélection humaine puis sauvegarde dans `ServerStorage/RobloxAssetsCreator_Assets` ;
 - providers IA local Ollama, OpenAI, Claude, DeepSeek, Gemini et OpenRouter ;
 - clés API stockées côté serveur ;
@@ -84,3 +85,4 @@ Les nouveaux jobs utilisent une classification à 8 catégories, un inventaire d
 Active « Examiner la décomposition » si tu veux modifier les composants avant construction. Le score attribué par l'IA et la note humaine sont distincts ; seul un choix noté au moins 8 par l'utilisateur peut enrichir la bibliothèque locale.
 `npm run verify` inclut tests, build, 28 briefs de référence (statiques) et export du dataset. Les mesures visuelles exigent Studio.
 Voir docs/ARCHITECTURE.md, docs/PRIMITIVES.md, docs/CATEGORIES.md, docs/LIBRARY.md et docs/EVALUATION.md.
+Pour les contrats de correction et la reprise d'un rebuild échoué, voir [docs/CORRECTIONS.md](docs/CORRECTIONS.md) et [docs/LOCAL_AI_DIAGNOSTICS.md](docs/LOCAL_AI_DIAGNOSTICS.md). Les anciennes valeurs de `server/.env` peuvent limiter la sortie Ollama malgré des défauts du code plus élevés ; consulter `OLLAMA_REQUEST_SETTINGS` dans FULL TRACE.

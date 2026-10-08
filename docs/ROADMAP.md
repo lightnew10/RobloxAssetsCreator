@@ -1,7 +1,8 @@
-# Roadmap après la refonte générique — 8 octobre 2026
+# Roadmap après la refonte générique — 9 octobre 2026
 
 - [x] Revue par défauts branchée — à évaluer sur palmier et rocher dans Roblox Studio.
 - [x] Corrections par patch branchées — à évaluer dans Studio sur palmier, rocher et un objet nouveau ; la livraison visuelle réelle reste non mesurée.
+- [x] Préservation et récupération du plan après un rebuild échoué ; relance Ollama locale adaptée aux JSON tronqués. Tests automatisés passés, reprise du cocotier réel encore à vérifier dans Studio.
 
 - [x] Primitives génériques et tests unitaires ; ancien format Parts préservé.
 - [x] Schéma fermé pour inventaire des composants puis primitives.

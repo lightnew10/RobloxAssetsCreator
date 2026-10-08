@@ -1,8 +1,11 @@
 # Corrections par patch
 
+Patch et Rebuild humains passent par une clarification facultative de zéro à trois questions avant exécution. Voir [CORRECTION_CLARIFICATION.md](CORRECTION_CLARIFICATION.md) pour la fenêtre, les mesures, les réponses persistantes, les contrats et les limites de validation.
+
 Une correction conserve la variante source et crée une nouvelle variante. Les formats Parts patchables sont les paramètres d'un archétype, les primitives normalisées et les Parts historiques. Une génération native Roblox reçoit une nouvelle consigne et doit être vérifiée par comparaison des captures. Les anciens jobs restent lisibles ; les identifiants manquants et les paramètres implicites sont ajoutés à leur définition lors de la première correction, sans modifier leur géométrie source.
 Un patch exige le même `planVersion` que le plan courant du job ; une variante d'un plan plus ancien propose « Rebuild » dans l'interface, afin de ne pas appliquer ses identifiants de composants à un plan différent.
 Un rebuild conserve temporairement l'ancien plan. Si la nouvelle planification échoue, l'ancien plan est restauré afin de permettre un autre patch ; pour les jobs déjà affectés, le serveur peut relire le plan versionné dans les traces. Une planification locale tronquée augmente sa limite de sortie au second essai, et les appels structurés de géométrie et correction désactivent le raisonnement du modèle local.
+Si aucun plan n'est récupérable, l'API renvoie `CORRECTION_PLAN_MISSING` avant de lancer la construction. Le correctif ne relance pas automatiquement une tentative échouée : après redémarrage du serveur, demander une nouvelle correction depuis une variante terminée. Le job et les variantes précédents restent dans l'historique.
 Le schéma des primitives passe à `1.1.0` avec un champ `id` facultatif ; l'interpréteur accepte les définitions `1.0.0` et attribue les identifiants manquants avant un patch. Les champs de correction ajoutés aux jobs restent facultatifs pour les jobs historiques.
 
 ## Contrat du patch

@@ -26,6 +26,8 @@ RobloxAssetsCreator est une application autonome consacrée UNIQUEMENT à la cr�
 - Géométrie Parts : server/src/geometry.js ; maximum actuel 180 Parts ; formes box, cylinder, ball, wedge ; propriétés name, componentId, shape, size, position, rotation, color, material, canCollide.
 - Construction Roblox : server/src/assetStudio.js ; variantes natives via generate_mesh / generate_procedural_model, si disponibles, ou Parts.
 - Contrôles : captures, qualityPolicy, recovery, trace, learning ; conserver FULL TRACE et la sélection humaine avant sauvegarde définitive.
+- Corrections : consulter docs/CORRECTIONS.md. Un patch repart de la définition de la variante choisie, crée une nouvelle variante et conserve la source. Pour les Parts, vérifier les empreintes de définition et de géométrie, les captures correspondantes et la revue ciblée ; `no_effect` ou `unsupported` ne deviennent pas des succès. Une correction n'alimente les exemples qu'après résolution et validation humaine explicite.
+- Rebuild : conserver l'ancien plan jusqu'à validation du nouveau. Après un échec de planification, restaurer le plan précédent ; les anciens jobs peuvent récupérer leur plan versionné dans FULL TRACE. Ne jamais lancer un patch avec un plan absent, ni confondre sortie Ollama tronquée et erreur de géométrie Studio.
 - Toute évolution des schémas, limites, paramètres ou étapes nécessite validation de schéma, tests de compatibilité et plan de migration. Ne pas injecter dans le runtime des champs que ses validateurs ne comprennent pas.
 
 ## Stratégie 3D — ne pas limiter arbitrairement la solution aux Parts
@@ -49,6 +51,7 @@ Toujours justifier le choix du procédé par le besoin visuel, l'éditabilité, 
 - Avant de modifier le pipeline, créer ou préserver des tests de non-régression. Commande projet : npm run verify (tests serveur + build web). Consulter docs/TESTING.md pour les tests manuels Studio.
 - Cas prioritaires : cocotier, feuillu, rocher, maison ; silhouette, proportions, composants absents, stabilité parent/enfant, nombre de Parts/triangles, captures et boucle de correction.
 - Garder des bornes aux retries ; diagnostiquer les mêmes erreurs via FULL TRACE plutôt que relancer en boucle.
+- Pour Ollama local, lire `OLLAMA_STREAM_FINISHED` et `OLLAMA_REQUEST_SETTINGS` avant d'ajuster une relance. Une réponse `doneReason: length` peut nécessiter plus de tokens de sortie ; les appels structurés désactivent le raisonnement par défaut sauf choix explicite pour la planification. Les valeurs de `server/.env` priment sur les défauts du code et doivent être examinées sans afficher les secrets.
 - Ne pas committer clés API, tokens, images privées, données runtime ou traces sensibles. Garder les secrets côté serveur. Ne pas publier d'images/textures sur Roblox ou envoyer des données à un service externe sans autorisation appropriée.
 - Ne pas écrire ou écraser les fichiers propres à l'utilisateur ; préserver les assets déjà sauvegardés. Tout téléchargement/import doit respecter les droits sur les images.
 

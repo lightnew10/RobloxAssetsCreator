@@ -18,7 +18,10 @@ TEXT_MODEL : inventaire et paramètres. VISION_MODEL : photo. CRITIC_MODEL optio
 ## Revue et apprentissage
 
 ### Corrections par patch
+
+Les demandes humaines passent d'abord par une clarification bornée (zéro à trois questions) avec mesures source, pause persistante et réponses transmises au patch/rebuild. Voir [CORRECTION_CLARIFICATION.md](CORRECTION_CLARIFICATION.md). La création initiale et la boucle automatique restent sur leurs parcours existants.
 Les corrections Parts repartent de la définition sauvegardée et appliquent des opérations validées par schéma, ciblant un paramètre ou une primitive à identifiant stable. La variante source reste intacte ; les anciennes définitions sont complétées lors de leur première correction. Empreintes de définition et de géométrie, captures avant/après et revue visuelle ciblée déterminent `resolved`, `unresolved` ou `no_effect`. Les meshes natifs reçoivent une nouvelle consigne et sont comparés par captures. Les tentatives, validations et demandes non supportées sont conservées dans des JSONL locaux ; seules les corrections résolues et validées par l'utilisateur servent d'exemples. Voir [CORRECTIONS.md](CORRECTIONS.md).
+Le plan précédent est conservé pendant un rebuild et restauré si la nouvelle planification échoue. La reprise d'un ancien job sans plan peut lire son artefact `plan_vN` dans FULL TRACE ; un plan introuvable arrête le patch avec `CORRECTION_PLAN_MISSING` avant tout appel Studio.
 
 ### Revue structurée
 La critique visuelle utilise le vocabulaire fermé de `server/src/review/defectRules.json`.

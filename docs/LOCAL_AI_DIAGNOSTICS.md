@@ -107,7 +107,7 @@ Après ce correctif, la valeur attendue de `server.buildTag` sur `http://127.0.0
 ## Profil recommandé pour 8 Go de VRAM
 
 Le nouveau défaut est OLLAMA_NUM_CTX=8192, modifiable dans server/.env. Si une ancienne valeur 16384 y figure, la changer manuellement.
-Limites de sortie : OLLAMA_PLAN_NUM_PREDICT=1500, OLLAMA_GEOMETRY_NUM_PREDICT=650, OLLAMA_REVIEW_NUM_PREDICT=900. Augmenter si un JSON légitime est tronqué.
+Défauts du code pour la sortie : OLLAMA_PLAN_NUM_PREDICT=3000, OLLAMA_GEOMETRY_NUM_PREDICT=2000, OLLAMA_REVIEW_NUM_PREDICT=900. Les valeurs déjà inscrites dans `server/.env` restent prioritaires. Après une sortie marquée `doneReason: length`, la tentative suivante de planification ou de primitives génériques utilise au moins 3000 ou 2000 tokens respectivement.
 La géométrie procédurale est construite en JavaScript après la réponse compacte de l'IA, sans demander une liste de centaines de coordonnées.
 Les requêtes Ollama locales texte et vision sont sérialisées et toutes envoyées avec keep_alive:0 ; les chargements sont plus lents mais évitent que les modèles résident simultanément en VRAM.
 Au démarrage, GET /api/ps avertit si un modèle déjà chargé utilise partiellement le CPU et propose de réduire le contexte ou d'utiliser un modèle plus petit.
@@ -119,8 +119,14 @@ Commande exploratoire : npm run benchmark:planning produit data/runtime/benchmar
 
 Dans server/.env : TEXT_MODEL=qwen3:8b, VISION_MODEL=qwen3-vl:4b-instruct, CRITIC_MODEL= (vide = vision).
 Ces défauts s'appliquent aux nouvelles configurations, mais n'écrasent pas les modèles enregistrés dans Paramètres IA.
-OLLAMA_NUM_CTX=8192. OLLAMA_PLAN_NUM_PREDICT=1500, OLLAMA_GEOMETRY_NUM_PREDICT=650 et OLLAMA_REVIEW_NUM_PREDICT=900.
+OLLAMA_NUM_CTX=8192. Nouveaux défauts du code : OLLAMA_PLAN_NUM_PREDICT=3000, OLLAMA_GEOMETRY_NUM_PREDICT=2000 et OLLAMA_REVIEW_NUM_PREDICT=900 ; vérifier les valeurs effectives de `server/.env` dans `OLLAMA_REQUEST_SETTINGS`.
 Les appels Ollama locaux sont séquentiels, keep_alive:0. La première requête après changement de modèle peut être plus lente.
 Variables d'environnement du processus OLLAMA (pas Node) : OLLAMA_FLASH_ATTENTION=1 et OLLAMA_KV_CACHE_TYPE=q8_0, sous réserve de compatibilité de la version.
 GET /api/ps et GET /api/tags sont consultés au démarrage / bilan. Un modèle 7–8B quantifié Q4_K_M peut être préférable sur 8 Go ; surveiller ollama ps.
 Le modèle de vision ne génère jamais le plan géométrique ; il extrait les caractéristiques visibles et critique les captures.
+
+## Incident patch/rebuild du cocotier — 2026-10-08
+
+Le modèle `qwen3:8b` a produit des sorties `doneReason: length`, parfois presque entièrement dans `thinking`, puis des JSON de plan incomplets. Le rebuild a échoué et a laissé `plan:null` dans ce job. Le patch suivant a proposé `frondWidth=0.125`, mais la construction a échoué dans `normalizeGeometry` avant Studio car elle lisait ce plan absent. Le patch proposé ne prouve donc aucun changement visuel.
+
+Depuis le correctif, les appels structurés locaux désactivent le raisonnement par défaut, sauf choix explicite de planification. Après troncature, la relance bornée augmente la place réservée à la sortie. Le rebuild garde le plan antérieur et le restaure en cas d'échec ; une reprise d'un ancien job peut relire `plan_vN` dans ses traces. Redémarrer l'API pour charger le correctif. Pour le job concerné, demander un nouveau patch depuis une variante terminée, puis vérifier la nouvelle géométrie et les captures dans Studio. Aucun test automatisé ne démontre cette validation visuelle.

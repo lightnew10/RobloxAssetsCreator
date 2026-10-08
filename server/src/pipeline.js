@@ -29,6 +29,7 @@ import { qualityBatchDecision, rankQualityVariant } from './qualityPolicy.js';
 import { compareVersions, definitionFingerprint, geometryFingerprint } from './change/fingerprint.js';
 import { applyPatch, definitionForVariant, ensurePrimitiveIds, patchSchema } from './change/patch.js';
 import { feedbackType } from './change/feedbackTypes.js';
+import { applyClarificationResponse, clarificationSchema, clarificationSystem, correctionContext, createClarification } from './change/clarification.js';
 import { listCorrectionsForFeedbackType, recordCorrection, recordFeedback, recordGeneration, recordUnsupported, saveCapture } from './change/store.js';
 
 const queue = [];
@@ -243,7 +244,7 @@ async function buildPlan(job, referenceAnalysis) {
         numPredictOverride: truncatedPlan ? Math.max(config.ollamaPlanNumPredict, 3000) : null,
         messages: [
           { role: 'system', content: plannerSystem + (isGeneric ? '\\nMODE: INVOICE COMPONENTS ONLY, NO LOW-LEVEL PARTS. Use category from enum. Keep JSON below 1500 output tokens.\\nCATEGORY_TEMPLATE: '+categoryTemplate : '') },
-          { role: 'user', content: plannerUser({ brief: job.brief, category: job.category, subtype: job.subtype, style: job.style, feedback: [...(job.memoryLessons || []).map((x) => ({ source: 'validated_memory', text: x.text })), ...(job.feedback || [])], previousIssues: structuralIssues }) + '\nREFERENCE_ANALYSIS=' + JSON.stringify(referenceAnalysis) + (lastPlannerError ? '\nPREVIOUS_ATTEMPT_ERROR=' + JSON.stringify(lastPlannerError) + '\nCorrect only the identified error and return one complete JSON document.' : '') },
+          { role: 'user', content: plannerUser({ brief: job.brief, category: job.category, subtype: job.subtype, style: job.style, feedback: [...(job.memoryLessons || []).map((x) => ({ source: 'validated_memory', text: x.text })), ...(job.feedback || []).filter(entry => !entry.cancelled)], previousIssues: structuralIssues }) + '\nREFERENCE_ANALYSIS=' + JSON.stringify(referenceAnalysis) + (lastPlannerError ? '\nPREVIOUS_ATTEMPT_ERROR=' + JSON.stringify(lastPlannerError) + '\nCorrect only the identified error and return one complete JSON document.' : '') },
         ],
         schema: isGeneric ? inventorySchema : spatialPlanSchema,
         traceContext: { runId: job.id, phase: 'planning', attempt: attempt + 1, traceLevel: job.traceLevel },
@@ -316,7 +317,7 @@ async function makeGenericGeometry(job, variant){
           {role:'user',content:geometryUser({
             plan:job.plan,profile:variant.profile,
             examples:(job.memoryExamples||[]).filter(x=>x.decomposition),
-            feedback:[...(job.memoryLessons||[]).map(x=>({source:'validated_memory',text:x.text})),...(job.feedback||[])],
+            feedback:[...(job.memoryLessons||[]).map(x=>({source:'validated_memory',text:x.text})),...(job.feedback||[]).filter(entry => !entry.cancelled)],
             previousReview:variant.sourceReview||null,
           })}
         ],
@@ -387,7 +388,8 @@ async function preparePatch(job, variant) {
   } else {
     const response = await structuredChat({ provider: providerFor(job), messages: [
       { role: 'system', content: patchSystem },
-      { role: 'user', content: patchUser({ definition, feedback, componentId: variant.correctionRequest?.componentId, examples }) },
+      { role: 'user', content: patchUser({ definition, feedback, componentId: variant.correctionRequest?.componentId, examples,
+        context: correctionContext(job, { ...variant.correctionRequest, variantId: source.id, text: feedback }) }) },
     ], schema: patchSchema, traceContext: { runId: job.id, variantId: variant.id, phase: 'correction', traceLevel: job.traceLevel } });
     patch = response.data;
   }
@@ -443,7 +445,7 @@ async function makeGeometry(job, variant) {
           { role: 'user', content: geometryUser({
             plan: job.plan, profile: variant.profile,
             examples: (job.memoryExamples || []).filter(x=>x.archetype && x.params),
-            feedback: [...(job.memoryLessons || []).map(x => ({ source:'validated_memory',text:x.text })), ...(job.feedback || [])],
+            feedback: [...(job.memoryLessons || []).map(x => ({ source:'validated_memory',text:x.text })), ...(job.feedback || []).filter(entry => !entry.cancelled)],
             previousReview: variant.sourceReview || null,
           }) },
         ],
@@ -967,6 +969,8 @@ async function runContinuous(jobId) {
     }
     job = await getJob(jobId);
     if (job.pendingCorrection) {
+      if (await clarifyPendingCorrection(jobId)) return;
+      job = await getJob(jobId);
       const correction = job.pendingCorrection;
       if (correction.mode === 'patch') {
         await runPatch(job, correction);
@@ -1017,8 +1021,10 @@ async function runContinuous(jobId) {
 
 async function runJob(id) {
   let job = await getJob(id);
-  if (!job || job.stopRequested || ['review_ready','saved','stopped'].includes(job.status)) return;
+  if (!job || job.stopRequested || ['review_ready','saved','stopped','awaiting_correction_answers'].includes(job.status)) return;
   try {
+    if (job.pendingCorrection && await clarifyPendingCorrection(id)) return;
+    job = await getJob(id);
     await traceEvent(id, 'JOB_STARTED', { name: job.name, provider: job.provider, generationMode: generationModeForJob(job), engine: engineForJob(job) }, { phase: 'job' });
     if (job.continuousGeneration) {
       await runFull(job);
@@ -1076,6 +1082,52 @@ async function runJob(id) {
     await sendCriticalAlert(`RobloxAssetsCreator — erreur de génération\nJob : ${id}\nCode : ${safeTelegramErrorCode(cause.code || 'PIPELINE_FAILED')}\nConsulte la trace locale pour les détails.`);
     await traceArtifact(id, 'errors', 'pipeline_failure', { code:cause.code, message:cause.message, details:cause.details, stack:cause.stack }, { phase:'job' });
   }
+}
+
+export async function clarifyPendingCorrection(jobId, { chat = structuredChat } = {}) {
+  const job = await getJob(jobId);
+  const correction = job?.pendingCorrection;
+  if (!correction) return false;
+  if (correction.clarification) return correction.clarification.state === 'waiting';
+  await mutateJob(jobId, (item) => { item.status = 'clarifying_correction'; event(item, 'correction.clarifying', 'Analyse des précisions nécessaires.'); return item; });
+  const context = correctionContext(job, correction);
+  let clarification;
+  try {
+    const response = await chat({ provider: providerFor(job), messages: [
+      { role: 'system', content: clarificationSystem },
+      { role: 'user', content: JSON.stringify(context) },
+    ], schema: clarificationSchema, traceContext: { runId: jobId, variantId: correction.variantId,
+      phase: 'clarification', traceLevel: job.traceLevel } });
+    clarification = createClarification(response.data, context);
+  } catch (cause) {
+    // A failed interpreter must not silently execute an ambiguous correction.
+    clarification = createClarification({ questions: [{ question: 'Quelle modification précise souhaites-tu appliquer ? Indique la cible, la quantité ou la forme souhaitée et ce qui doit rester identique.', options: [], required: true }] }, context);
+    clarification.diagnostic = cause.code || 'CLARIFICATION_FAILED';
+    await traceEvent(jobId, 'correction.clarification_failed', { code: clarification.diagnostic }, { phase: 'clarification', traceLevel: job.traceLevel }).catch(() => {});
+  }
+  await mutateJob(jobId, (item) => {
+    if (item.pendingCorrection?.id !== correction.id) return item;
+    item.pendingCorrection.clarification = clarification;
+    item.status = item.stopRequested ? 'stopped' : clarification.state === 'waiting' ? 'awaiting_correction_answers' : 'queued';
+    event(item, 'correction.clarified', clarification.questions.length ? 'L’IA attend tes réponses avant la correction.' : 'Demande suffisamment précise.', { correctionId: correction.id, questionCount: clarification.questions.length });
+    return item;
+  });
+  return clarification.state === 'waiting' || Boolean((await getJob(jobId)).stopRequested);
+}
+
+export async function answerCorrectionQuestions(jobId, correctionId, input = {}) {
+  let resume = false;
+  const job = await mutateJob(jobId, (item) => {
+    resume = applyClarificationResponse(item, correctionId, input);
+    event(item, 'correction.answers_' + input.action, input.action === 'submit' ? 'Réponses enregistrées : reprise de la correction.' : input.action === 'cancel' ? 'Correction annulée ; source conservée.' : 'Réponses conservées.', { correctionId });
+    return item;
+  });
+  await traceEvent(jobId, 'correction.answers_' + input.action, { correctionId, answers: input.answers || {} }, { phase: 'clarification', traceLevel: job.traceLevel }).catch(() => {});
+  if (resume) {
+    if (!queue.includes(jobId)) queue.push(jobId);
+    queueMicrotask(drain);
+  }
+  return job;
 }
 
 export async function requestCorrection(jobId, input = {}) {
@@ -1227,7 +1279,7 @@ export function queueStatus() { return { running, queued: [...queue], active: [.
 export async function resumeJob(jobId) {
   const job = await mutateJob(jobId, (item) => {
     item.stopRequested = false;
-    item.status = 'queued';
+    item.status = item.pendingCorrection?.clarification?.state === 'waiting' ? 'awaiting_correction_answers' : 'queued';
     item.error = null;
     if (item.recovery) {
       item.recovery.lastSignature = null;
@@ -1243,7 +1295,7 @@ export async function reconcileInterruptedJobs() {
   const jobs = await listJobs(200);
   let count = 0;
   for (const job of jobs) {
-    if (!['queued','understanding','planning','generating'].includes(job.status)) continue;
+    if (!['queued','understanding','planning','generating','clarifying_correction'].includes(job.status)) continue;
     await mutateJob(job.id, (item) => {
       item.status = 'interrupted';
       item.error = { code: 'SERVER_RESTARTED', message: 'Le serveur a redémarré pendant cette création. Réautorise Studio puis clique sur Reprendre.' };

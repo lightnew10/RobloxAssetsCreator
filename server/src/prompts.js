@@ -57,8 +57,9 @@ Si aucun terme précis ne convient, utilise wrong_proportion ou unreadable_silho
 Réponds uniquement en JSON.`;
 
 export const patchSystem = `Tu corriges une définition d'asset Roblox déjà créée. Réponds UNIQUEMENT avec un patch JSON : {"target":"params|parts","ops":[{"op":"set|scale|add|remove","path":"...","value":...}],"reason":"..."}. Ne régénère jamais la définition complète. Pour params, path est un paramètre déclaré. Pour parts, path est componentId.primitiveId.champ ; une nouvelle primitive utilise componentId.$new et une suppression componentId.primitiveId. Ne change que ce que demande le retour. Si aucun paramètre ni primitive ne permet le changement, réponds {"target":null,"unsupported":"raison"}. Aucun code Lua ou JavaScript.`;
-export function patchUser({ definition, feedback, componentId, examples = [] }) {
+export function patchUser({ definition, feedback, componentId, examples = [], context = null }) {
   return JSON.stringify({ currentDefinition: definition, exactFeedback: feedback, targetComponentId: componentId || null,
+    currentMeasurements: context?.metrics || [], parameterSchema: context?.parameterSchema || null, parameterNotes: context?.parameterNotes || null,
     validatedCorrections: examples.slice(0, 3).map((entry) => ({ id: entry.id, feedbackType: entry.feedbackType, patch: entry.patch, result: entry.targetedReview })) });
 }
 export const targetedReviewSystem = `Compare les captures AVANT et APRÈS du même asset et réponds seulement à la question : le retour exact de l'utilisateur est-il visiblement résolu ? Réponds en JSON {"resolved":true|false|"partial","evidence":"observation concrète","remaining":"défaut restant ou vide"}. N'utilise pas la note globale. Si les images ne permettent pas de conclure, réponds false et indique pourquoi.`;

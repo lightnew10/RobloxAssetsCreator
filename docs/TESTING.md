@@ -1,8 +1,11 @@
 # Tests manuels
 
+Pour les nouvelles questions avant Patch/Rebuild, suivre le scénario Studio de [CORRECTION_CLARIFICATION.md](CORRECTION_CLARIFICATION.md). La validation du formulaire et deux appels Ollama fictifs ne remplacent pas la comparaison géométrique et visuelle finale.
+
 Avant les tests automatisés, lancer `npm install` à la racine, puis `npm test`.
 
 Pour les corrections : dans Studio, générer un palmier Parts puis demander « palmes trop fines » en ciblant les palmes. Vérifier le patch proposé sur `frondWidth`, les opérations appliquées, `changed` et les captures avant/après. Demander ensuite « il manque des feuilles » ; vérifier une modification de `frondCount` et la revue ciblée. Répéter sur un rocher et un objet inconnu. Une correction sans effet doit afficher « Aucun effet » et rester exclue de la sélection ; une correction `resolved` ne devient exemple qu'après clic sur « Valider cette correction ». Ce scénario n'est pas couvert par les tests hors Studio.
+Pour la reprise d'un rebuild échoué : garder un job ayant une variante terminée, provoquer un échec de planification sur un rebuild, puis vérifier que son ancien plan est encore disponible. Demander ensuite un patch sur la variante source ; il ne doit pas échouer sur `Cannot read properties of null (reading 'components')`. Sur un ancien job dont le plan est déjà absent, vérifier la restauration depuis `plan_vN` dans FULL TRACE ; sans artefact récupérable, l'API doit répondre `CORRECTION_PLAN_MISSING` avant construction. Ne pas attribuer `changed` ou `resolved` à une tentative qui échoue avant les captures.
 
 Voir aussi [Diagnostics IA locale](LOCAL_AI_DIAGNOSTICS.md) pour les requêtes Ollama longues et le fournisseur de planification dédié.
 

@@ -1,6 +1,6 @@
 # AI_INDEX — RobloxAssetsCreator
 
-Dernière revue documentaire : 2026-10-08. Le dépôt et ses tests sont la source de vérité ; cet index ne garantit pas que les fonctionnalités ont été validées dans Roblox Studio.
+Dernière revue documentaire : 2026-10-09. Le dépôt et ses tests sont la source de vérité ; cet index ne garantit pas que les fonctionnalités ont été validées dans Roblox Studio.
 
 ## Objectif
 Créer et améliorer des assets 3D Roblox indépendamment de MyRGame ; trois variantes par défaut, contrôle qualité et choix humain.
@@ -10,6 +10,9 @@ Créer et améliorer des assets 3D Roblox indépendamment de MyRGame ; trois var
 - Architecture constatée : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Tests manuels : [docs/TESTING.md](docs/TESTING.md)
 - Corrections par patch : [docs/CORRECTIONS.md](docs/CORRECTIONS.md)
+- Questions avant Patch/Rebuild, mesures et réponses persistantes : [docs/CORRECTION_CLARIFICATION.md](docs/CORRECTION_CLARIFICATION.md).
+- Audit du cas cocotier, limites des corrections et propositions : [docs/AUDIT_CORRECTIONS_2026-10-09.md](docs/AUDIT_CORRECTIONS_2026-10-09.md) (diagnostic, aucun correctif runtime livré).
+- Diagnostic Ollama et reprise après échec : [docs/LOCAL_AI_DIAGNOSTICS.md](docs/LOCAL_AI_DIAGNOSTICS.md)
 - Refonte progressive PROPOSÉE : [docs/ASSET_PIPELINE_V2.md](docs/ASSET_PIPELINE_V2.md)
 - ComfyUI / textures PROPOSÉS : [docs/COMFYUI_INTEGRATION.md](docs/COMFYUI_INTEGRATION.md)
 - Catalogue des presets NON branchés : [prompts/README.md](prompts/README.md)
@@ -35,6 +38,7 @@ Créer et améliorer des assets 3D Roblox indépendamment de MyRGame ; trois var
 - Constructeur Parts plafonné à 180 pièces, utilisant box / cylinder / ball / wedge.
 - Les presets du dossier prompts/ ne sont pas encore connectés au pipeline.
 - Pas d'intégration ComfyUI vérifiée ; aucune validation runtime Roblox effectuée pendant la rédaction des documents.
+- Un ancien `server/.env` peut conserver des limites de sortie Ollama plus basses que les défauts du code. Un rebuild échoué peut avoir laissé le plan à `null` dans un job historique ; la reprise relit le plan versionné dans ses traces lorsqu'il est disponible.
 
 ## Prochain objectif
 Établir une référence de qualité mesurable avec les tests Studio, introduire une représentation géométrique mieux adaptée aux objets organiques, puis expérimenter une voie hybride Mesh/Parts et un flux textures optionnel, sans régression sur le mode actuel.
