@@ -13,7 +13,8 @@
     "build": "npm run build --workspace web",
     "test": "npm test --workspace server",
     "verify": "npm run test && npm run build",
-    "export:dataset": "node server/scripts/export-dataset.js"
+    "export:dataset": "node server/scripts/export-dataset.js",
+    "benchmark:planning": "node server/scripts/benchmark-planning.js"
   },
   "engines": {
     "node": ">=20.19.0"
