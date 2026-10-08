@@ -2,6 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { resolveStudioSelection } from './studioSelection.js';
 
 const providers = ['local','openai','claude','deepseek','gemini','openrouter'];
+const generationModes = [
+  { id: 'local', title: 'Sans IA Roblox', description: 'Par défaut · planification IA et construction 3D par Parts. Roblox Studio sert à placer et capturer le modèle, sans génération IA native.' },
+  { id: 'roblox', title: 'IA Roblox uniquement', description: 'Géométrie générée par Roblox via MCP, sans repli vers les Parts. Le provider IA configuré peut encore participer au plan et à la critique.' },
+  { id: 'hybrid', title: 'Local + IA Roblox', description: 'Roblox natif d’abord si disponible, puis notre pipeline Parts si nécessaire. Le moteur effectif reste identifié pour chaque variante.' },
+];
+const generationModeName = (id) => generationModes.find(mode => mode.id === id)?.title || generationModes[0].title;
+const sourceName = (variant) => (variant.generationSource || (variant.engineUsed === 'native' ? 'roblox_native' : variant.engineUsed?.startsWith('parts') ? 'local_parts' : '')) === 'roblox_native'
+  ? 'Généré par IA Roblox' : variant.engineUsed ? 'Généré par notre pipeline (Parts)' : 'Moteur non encore déterminé';
 const api = async (url, options={}) => {
   const response = await fetch(url, { cache:'no-store', ...options, headers:{'Content-Type':'application/json',...(options.headers||{})} });
   const data = await response.json().catch(()=>({}));
@@ -29,6 +37,18 @@ function ProviderSettings({settings,onClose,onReload}) {
   };
   return <div className="modal-backdrop"><div className="modal settings-modal">
     <div className="modal-head"><div><h2>Paramètres IA</h2><p>Les clés restent sur le serveur local et ne sont jamais renvoyées en clair.</p></div><button onClick={onClose}>✕</button></div>
+    <fieldset className="generation-settings">
+      <legend>Génération 3D · utilisation de l'IA Roblox</legend>
+      <p>Ce choix s'applique aux nouvelles créations et évite de confondre les résultats locaux avec ceux de l'IA native Roblox.</p>
+      <div className="generation-options">
+        {generationModes.map(mode=><label key={mode.id} className={'generation-option '+((draft.generationMode||'local')===mode.id?'selected':'')}>
+          <input type="radio" name="generationMode" value={mode.id}
+            checked={(draft.generationMode||'local')===mode.id}
+            onChange={()=>{setDraft(current=>({...current,generationMode:mode.id}));save({generationMode:mode.id});}} />
+          <span><strong>{mode.title}</strong><small>{mode.description}</small></span>
+        </label>)}
+      </div>
+    </fieldset>
     <div className="settings-row">
       <label>Provider texte<select value={draft.selectedProvider} onChange={e=>{setDraft({...draft,selectedProvider:e.target.value});save({selectedProvider:e.target.value});}}>
         {providers.map(id=><option key={id} value={id}>{id}</option>)}
@@ -95,7 +115,7 @@ function StudioPanel({studio,onRefresh}) {
 }
 
 function CreatePanel({settings,studio,onCreated}) {
-  const [form,setForm]=useState({name:'',brief:'',category:'tree',subtype:'',style:'stylized Roblox',provider:settings.selectedProvider,planningProvider:settings.selectedProvider,planningModel:'',visionProvider:settings.selectedVisionProvider,engine:'auto',variantTarget:3});
+  const [form,setForm]=useState({name:'',brief:'',category:'tree',subtype:'',style:'stylized Roblox',provider:settings.selectedProvider,planningProvider:settings.selectedProvider,planningModel:'',visionProvider:settings.selectedVisionProvider,variantTarget:3});
   const [images,setImages]=useState([]);
   const [error,setError]=useState('');
   useEffect(()=>setForm(f=>({...f,provider:settings.selectedProvider,visionProvider:settings.selectedVisionProvider})),[settings.selectedProvider,settings.selectedVisionProvider]);
@@ -124,7 +144,7 @@ function CreatePanel({settings,studio,onCreated}) {
         <label>IA planification<select value={form.planningProvider} onChange={e=>setForm({...form,planningProvider:e.target.value,planningModel:''})}>{providers.map(id=><option key={id} value={id} disabled={!settings.providers[id]?.configured}>{id}</option>)}</select></label>
         <label>Modèle de planification (facultatif)<input value={form.planningModel} onChange={e=>setForm({...form,planningModel:e.target.value})} placeholder="Vide = modèle du provider sélectionné" /></label>
         <label>IA vision<select value={form.visionProvider} onChange={e=>setForm({...form,visionProvider:e.target.value})}>{providers.map(id=><option key={id} value={id} disabled={!settings.providers[id]?.configured}>{id}</option>)}</select></label>
-        <label>Moteur 3D<select value={form.engine} onChange={e=>setForm({...form,engine:e.target.value})}><option value="auto">Auto</option><option value="parts">Parts contrôlées</option><option value="native">Roblox natif</option></select></label>
+        <div className="generation-summary"><strong>Mode 3D actif</strong><span>{generationModeName(settings.generationMode)}</span><small>Modifiable via « Paramètres IA » en haut à droite.</small></div>
         <label>Variantes<select value={form.variantTarget} onChange={e=>setForm({...form,variantTarget:Number(e.target.value)})}>{[1,2,3,4,5,6].map(n=><option key={n}>{n}</option>)}</select></label>
       </div>
       <label>Brief complet<textarea rows="5" value={form.brief} onChange={e=>setForm({...form,brief:e.target.value})} placeholder="Décris la silhouette, les proportions, les branches, feuilles, couleurs, détails indispensables..." /></label>
@@ -157,7 +177,7 @@ function VariantCard({job,variant,onRefresh}) {
   return <article className={'variant '+(job.bestVariantId===variant.id?'best':'')}>
     <div className="variant-head"><div><span className="variant-no">V{variant.order+1}</span><strong>{variant.profile?.label||'Variante'}</strong></div><div>{variant.review&&<span className={'score '+scoreClass(variant.review.score)}>{Number(variant.review.score).toFixed(1)}/10</span>}<span className="mini-status">{variant.status}</span></div></div>
     <div className="captures">{(variant.captures||[]).map((c,i)=><a key={c.fileName} href={'/api/jobs/'+job.id+'/captures/'+c.fileName} target="_blank"><img src={'/api/jobs/'+job.id+'/captures/'+c.fileName} alt={'vue '+(i+1)} /></a>)}</div>
-    <div className="variant-meta"><span>{variant.engineUsed||job.engine}</span><span>{variant.technicalAudit?.partCount!=null?variant.technicalAudit.partCount+' parts':''}</span><span>{variant.technicalAudit?.passed?'audit OK':variant.technicalAudit?'audit KO':''}</span></div>
+    <div className="variant-meta"><span title={'Moteur effectif : '+(variant.engineUsed||job.engine)}>{sourceName(variant)}</span><span>{variant.technicalAudit?.partCount!=null?variant.technicalAudit.partCount+' parts':''}</span><span>{variant.technicalAudit?.passed?'audit OK':variant.technicalAudit?'audit KO':''}</span></div>
     {variant.review&&<div className="review"><p><strong>{variant.review.decision}</strong> · {variant.review.improvement}</p><div className="criteria">{(variant.review.criteria||[]).map((c,i)=><span key={i} title={c.comment}>{c.name}: {c.score}/10</span>)}</div></div>}
     {variant.status==='done'&&job.status==='review_ready'&&<div className="variant-actions">
       <button className="primary" disabled={busy} onClick={save}>Choisir + sauvegarder</button>
