@@ -82,13 +82,18 @@ export async function createAssetJob(input = {}) {
   const engine = engineForGenerationMode(generationMode);
   const id = randomUUID();
   const target = Math.max(1, Math.min(config.maxVariants, Number(input.variantTarget) || 3));
+  const requestedSizeStuds=Array.isArray(input.sizeStuds) && input.sizeStuds.length===3 &&
+    input.sizeStuds.every(v=>Number.isFinite(Number(v))&&Number(v)>=.2&&Number(v)<=200)
+    ? input.sizeStuds.map(Number) : null;
+  const maxParts=Math.max(1,Math.min(180,Number(input.maxParts)||180));
   const memoryLessons = await relevantLessons({ name, category: input.category || 'prop', subtype: input.subtype || '' });
   const libraryExamples = await searchLibrary({name,brief,category:input.category||'prop',subtype:input.subtype||''});
   const memoryExamples = [...libraryExamples, ...(await relevantExamples({ name, brief, category: input.category || 'prop', subtype: input.subtype || '' }))].slice(0,3);
   const job = {
     schemaVersion: 2, id, name, brief, category: bounded(input.category || 'prop', 80), subtype: bounded(input.subtype, 80),
-    style: bounded(input.style || 'stylized Roblox', 300), studioId, provider, visionProvider, planningProvider, planningModel,
+    style: bounded(input.style || 'Roblox low-poly stylisé, arêtes franches, palette réduite', 300), studioId, provider, visionProvider, planningProvider, planningModel,
     generationMode, engine, geometryStrategy: 'generic_primitives_v1',
+    requestedSizeStuds,maxParts,
     previewDecomposition:input.previewDecomposition===true,planApproved:input.previewDecomposition!==true,
     variantTarget: target, traceLevel: input.traceLevel === 'off' ? 'off' : 'full',
     qualityPolicy: { initialVariants: target, autoAcceptScore: 8, essentialAcceptMinScore: 8, humanReviewMinScore: 5, essentialReviewMinScore: 5, maxPatchesPerCandidate: 2, maxRebuildsPerObject: 1, maxAttemptsPerObject: 9 },
@@ -208,7 +213,8 @@ async function buildPlan(job, referenceAnalysis) {
       });
       // Normalize only once: a second pass would discard the original repair
       // audit and could turn a successfully repaired virtual root into noise.
-      const plan = normalizeSpatialPlan(response.data, null, [10, 10, 10]);
+      const requested=job.requestedSizeStuds;
+      const plan = normalizeSpatialPlan(requested?{...response.data,sizeStuds:requested}:response.data,null,requested||[10,10,10]);
       if(isGeneric){
         plan.category=resolveCategory(response.data.category,job);
         plan.interpreterVersion=PRIMITIVE_VERSION;
