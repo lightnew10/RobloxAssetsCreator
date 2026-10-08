@@ -77,10 +77,33 @@ test('initial saves and concurrent mutations of the same job cannot overwrite ea
   const file = path.join(config.jobsRoot, id + '.json');
   try {
     const job = { id, counter: 0, createdAt: new Date().toISOString() };
-    await Promise.all([saveJob(job), ...[]]);
-    await Promise.all(Array.from({ length: 24 }, () => mutateJob(id, item => { item.counter += 1; return item; })));
+    // Simulate a freshly created job immediately receiving queued mutations.
+    await Promise.all([saveJob(job), ...Array.from({ length: 24 }, () =>
+      mutateJob(id, item => { item.counter += 1; return item; }))]);
     assert.equal((await getJob(id)).counter, 24);
   } finally {
     await rm(file, { force: true });
   }
+});
+
+test('EACCES and EBUSY locks are retried as transient conflicts', async () => {
+  for (const failCode of ['EACCES', 'EBUSY']) {
+    const fs = fakeFilesystem({ failRenames: 1, failCode });
+    await writeAtomicJson(target, { ok: true }, {
+      fsApi: fs.fsApi, maxAttempts: 2, pause: async () => {},
+    });
+    assert.equal(fs.attempts, 2);
+    assert.deepEqual(JSON.parse(fs.files.get(target)), { ok: true });
+  }
+});
+
+test('failed temporary-file write never modifies the saved snapshot', async () => {
+  const fs = fakeFilesystem();
+  fs.fsApi.writeFile = async (_name, _body) => {
+    throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+  };
+  await assert.rejects(writeAtomicJson(target, { ok: true }, { fsApi: fs.fsApi }),
+    error => error.code === 'ENOSPC');
+  assert.equal(fs.files.get(target), 'LAST_GOOD_SNAPSHOT');
+  assert.equal(fs.attempts, 0);
 });
