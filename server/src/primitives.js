@@ -56,7 +56,7 @@ function finiteParts(parts){
   return parts.every(p=>validVec(p.position,3)&&validVec(p.rotation,3)&&validVec(p.size,3)&&
     p.size.every(x=>x>=.2&&x<=200)&&p.position[1]>=0);
 }
-export function validatePrimitiveStructure(raw,plan){
+export function validatePrimitiveStructure(raw,plan,{allowPartial=false}={}){
   const issues=[],ids=new Set((plan?.components||[]).map(x=>x.id));
   if(!validateJson(raw)){
     return [{code:'schema_violation',message:'JSON schema non conforme',
@@ -77,11 +77,11 @@ export function validatePrimitiveStructure(raw,plan){
         issues.push({code:'schema_violation',componentId:component.componentId,index,field:'profile'});
     }
   }
-  for(const id of ids)if(!seen.has(id))issues.push({code:'component_missing',componentId:id});
+  if(!allowPartial)for(const id of ids)if(!seen.has(id))issues.push({code:'component_missing',componentId:id});
   return issues;
 }
-export function interpretPrimitives(raw,plan,{profile='balanced',maxParts=180,minDetail=.2}={}){
-  const errors=validatePrimitiveStructure(raw,plan);
+export function interpretPrimitives(raw,plan,{profile='balanced',maxParts=180,minDetail=.2,allowPartial=false}={}){
+  const errors=validatePrimitiveStructure(raw,plan,{allowPartial});
   if(errors.length)throw Object.assign(new Error('Décomposition invalide : '+errors[0].code),{code:'PRIMITIVE_STRUCTURE_INVALID',details:errors});
   const scale=(plan?.sizeStuds||[10,10,10]).map(x=>clamp(num(x,10),1,200));
   const factors=sizeFactors[profile]||sizeFactors.balanced;
