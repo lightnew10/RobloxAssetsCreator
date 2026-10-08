@@ -3,6 +3,7 @@ import broadleaf from './broadleaf.js';
 import rock from './rock.js';
 import house from './house.js';
 import { bounds, profileParams } from './utils.js';
+import { validateArchetypeShape } from './shapeConstraints.js';
 
 export const archetypes=Object.freeze({palmTree,broadleaf,rock,house});
 export const archetypeIds=Object.freeze(Object.keys(archetypes));
@@ -79,6 +80,8 @@ export function buildProceduralGeometry(definition,plan,profile,seed){
   const params=definition.params||{};
   const built=archetype.build(params,{sizeStuds:plan?.sizeStuds,profile:variation,seed});
   if(!Array.isArray(built.parts)||!built.parts.length)throw new Error('Archétype sans géométrie.');
+  const shapeIssues=validateArchetypeShape(definition.archetype,built.parts,plan?.sizeStuds);
+  if(shapeIssues.length)throw Object.assign(new Error('Géométrie procédurale structurellement invalide : '+shapeIssues.join(', ')),{code:'ARCHETYPE_SHAPE_INVALID',details:shapeIssues});
   const parts=assignComponents(built.parts,plan);
   return {parts,definition:{archetype:definition.archetype,params,variation,parameterModifiers:profileParams(variation)},bounds:bounds(parts)};
 }
