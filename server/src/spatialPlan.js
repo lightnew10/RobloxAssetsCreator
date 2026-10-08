@@ -42,6 +42,23 @@ function normalizeComponents(raw=[]){
   return{components:entries,sourceIds};
 }
 const unique=(map,k)=>{const a=map.get(k)||[];return a.length===1?a[0]:null;};
+// The Roblox Model is an implicit container, not a geometry component.
+// Only detach absent virtual roots when the reference is unambiguously a
+// container (known literal or a root_* ID shared by multiple components).
+function virtualRootReference(ref, siblings) {
+  const id=idKey(ref);
+  return ['root','asset_root','model_root','scene_root','world_root'].includes(id)
+    || (id.startsWith('root_') && siblings>=2);
+}
+function dedupeIssues(issues) {
+  const seen=new Set();
+  return issues.filter(issue=>{
+    const key=[issue.code,issue.componentId||'',issue.parentReference||issue.parentId||''].join('|');
+    if(seen.has(key))return false;
+    seen.add(key);
+    return true;
+  });
+}
 function cycleIssues(components){
   const byId=new Map(components.map(c=>[c.id,c])),out=[];
   for(const c of components){const seen=new Set([c.id]);let parent=c.parentId;while(parent){if(seen.has(parent)){out.push({code:'parent_cycle',componentId:c.id,component:c.name,parentId:parent});break;}seen.add(parent);parent=byId.get(parent)?.parentId;}}
@@ -52,9 +69,26 @@ export function repairSpatialParents(components=[],{sourceIds=new Map()}={}){
   const add=(m,k,id)=>{if(!k)return;const a=m.get(k)||[];a.push(id);m.set(k,a);};
   for(const c of out){add(exact,c.name,c.id);add(names,key(c.name),c.id);add(roles,key(c.role),c.id);}
   const repairs=[],unresolved=[];
+  const referenceCounts=new Map();
+  for(const c of out){
+    const ref=bounded(c.parentId||c.parent,90);
+    if(ref)referenceCounts.set(idKey(ref),(referenceCounts.get(idKey(ref))||0)+1);
+  }
   for(const c of out){
     const requested=bounded(c.parentId||c.parent,90);delete c.parent;if(!requested){delete c.parentId;continue;}
     let parent=ids.has(requested)?requested:unique(sourceIds,requested)||unique(exact,requested)||unique(names,key(requested))||unique(roles,key(requested)),reason=ids.has(requested)?'stable_id':'alias';
+    if(!parent && virtualRootReference(requested,referenceCounts.get(idKey(requested))||0)){
+      delete c.parentId;
+      repairs.push({
+        code:'virtual_root_detached',
+        componentId:c.id,
+        component:c.name,
+        from:requested,
+        to:null,
+        reason:'implicit_roblox_model_container',
+      });
+      continue;
+    }
     if(!parent){
       const wanted=new Set(key(requested).split(' ').filter(t=>t.length>2));
       const candidates=out.filter(x=>x.id!==c.id).map(x=>{const tokens=new Set(key((x.name||'')+' '+(x.role||'')).split(' ').filter(t=>t.length>2));const overlap=[...wanted].filter(t=>tokens.has(t)).length;return{id:x.id,score:overlap/Math.max(1,wanted.size,tokens.size)};}).filter(x=>x.score>=.5).sort((a,b)=>b.score-a.score);
@@ -90,7 +124,7 @@ export function normalizeSpatialPlan(raw,brief=null,fallbackSize=null){
   const prepared=repairAiSpatialPlan(raw),components=prepared.input.components,essentialCriteria=(brief?.essentials||raw?.essentialCriteria||[]).slice(0,10).map(x=>bounded(x,90)).filter(Boolean),captureViews=(brief?.views||raw?.captureViews||[]).slice(0,3).map(x=>bounded(x)).filter(Boolean);
   if(!components.length||!essentialCriteria.length||captureViews.length!==3)throw Object.assign(new Error('Plan 3D incomplet : composants, critères ou captures manquants.'),{code:'ASSET_SPATIAL_PLAN_INCOMPLETE'});
   const plan={sizeStuds,components,essentialCriteria,captureViews,nativeMethod:raw?.nativeMethod==='generate_mesh'?'generate_mesh':'generate_procedural_model',dimensionFallback:!fixed&&!requested&&fallback?{used:true,rejected:raw?.sizeStuds??null,replacement:sizeStuds,reason:'Dimensions IA absentes, incomplètes ou hors limites ; dimensions sûres issues du profil de l’objet.'}:null,structureNormalization:{repairs:prepared.repairs,unresolved:prepared.unresolved}};
-  const structure=validateSpatialStructure(plan),issues=[...prepared.unresolved,...structure.issues].filter((x,i,a)=>i===a.findIndex(y=>JSON.stringify(y)===JSON.stringify(x)));
+  const structure=validateSpatialStructure(plan),issues=dedupeIssues([...prepared.unresolved,...structure.issues]);
   if(issues.length){const e=new Error('Plan 3D structurellement invalide : '+issues.map(x=>x.code).join(', ')+'.');e.code='ASSET_SPATIAL_STRUCTURE_INVALID';e.details=issues;throw e;}
   return plan;
 }
