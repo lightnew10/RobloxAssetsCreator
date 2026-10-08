@@ -86,7 +86,7 @@ async function fetchJson(url, options, timeoutMs) {
   }
 }
 
-async function localChat({ runtime, messages, schema, images, traceContext = {}, thinkOverride = null }) {
+async function localChat({ runtime, messages, schema, images, traceContext = {}, thinkOverride = null, numPredictOverride = null }) {
   const body = {
     model: runtime.textModel,
     messages: messages.map((message, index) => index === messages.length - 1 && images?.length
@@ -97,10 +97,10 @@ async function localChat({ runtime, messages, schema, images, traceContext = {},
     keep_alive: 0,
     // Qwen3.5 can otherwise spend an entire attempt in thinking mode.
     // Never put think inside options: Ollama expects it at the top level.
-    ...(typeof thinkOverride === 'boolean' ? { think: thinkOverride } : traceContext.phase === 'planning' ? { think: config.ollamaPlanningThink } : {}),
+    ...(typeof thinkOverride === 'boolean' ? { think: thinkOverride } : { think: traceContext.phase === 'planning' ? config.ollamaPlanningThink : false }),
     format: schema || 'json',
     options: { temperature: 0.2, num_ctx: config.ollamaNumCtx,
-      num_predict: traceContext.phase === 'planning' ? config.ollamaPlanNumPredict :
+      num_predict: Number.isSafeInteger(numPredictOverride) ? numPredictOverride : traceContext.phase === 'planning' ? config.ollamaPlanNumPredict :
         traceContext.phase === 'geometry' ? config.ollamaGeometryNumPredict : config.ollamaReviewNumPredict },
   };
   const controller = new AbortController();
@@ -227,7 +227,7 @@ async function geminiChat({ runtime, messages, images, timeoutMs }) {
   return { raw: payload, text: payload?.candidates?.[0]?.content?.parts?.map((x) => x.text || '').join('') || '', model: runtime.textModel, usage: payload?.usageMetadata || null };
 }
 
-async function callProvider({ provider, messages, schema, images = [], timeoutMs = 240000, traceContext = {}, vision = false, modelOverride = '', thinkOverride = null }) {
+async function callProvider({ provider, messages, schema, images = [], timeoutMs = 240000, traceContext = {}, vision = false, modelOverride = '', thinkOverride = null, numPredictOverride = null }) {
   const runtime = vision ? getVisionRuntime(provider) : getProviderRuntime(provider);
   if (vision && runtime.visionModel) runtime.textModel = runtime.visionModel;
   if (modelOverride) runtime.textModel = String(modelOverride).trim();
@@ -237,7 +237,7 @@ async function callProvider({ provider, messages, schema, images = [], timeoutMs
   await traceProviderEvent({ kind: 'request', callId, provider, model: runtime.textModel, messages, schema, images, traceContext });
   let response;
   try {
-    if (provider === 'local') response = await serializeOllama(() => localChat({ runtime, messages, schema, images, traceContext, thinkOverride }));
+    if (provider === 'local') response = await serializeOllama(() => localChat({ runtime, messages, schema, images, traceContext, thinkOverride, numPredictOverride }));
     else if (provider === 'openai') response = await openAiCompatible({ runtime, messages, schema, images, timeoutMs, url: 'https://api.openai.com/v1/chat/completions' });
     else if (provider === 'deepseek') response = await openAiCompatible({ runtime, messages, schema, images: [], timeoutMs, url: 'https://api.deepseek.com/chat/completions' });
     else if (provider === 'openrouter') response = await openAiCompatible({ runtime, messages, schema, images, timeoutMs, url: 'https://openrouter.ai/api/v1/chat/completions', headers: { 'HTTP-Referer': 'http://127.0.0.1', 'X-Title': 'RobloxAssetsCreator' } });
@@ -255,6 +255,8 @@ async function callProvider({ provider, messages, schema, images = [], timeoutMs
     await traceProviderEvent({ kind: 'response', callId, provider, model: response.model, raw: response.raw, text: response.text, parsed: data, usage: response.usage, traceContext });
     return { data, meta: { provider, model: response.model, usage: response.usage } };
   } catch (cause) {
+    if (response?.raw?.done_reason === 'length' && ['AI_INVALID_JSON', 'AI_SCHEMA_INVALID'].includes(cause.code))
+      cause.details = { ...(cause.details && !Array.isArray(cause.details) ? cause.details : {}), doneReason: 'length' };
     if (response) await traceProviderEvent({
       kind: 'invalid_response', callId, provider, model: response.model || runtime.textModel,
       raw: response.raw, text: response.text, usage: response.usage, traceContext,

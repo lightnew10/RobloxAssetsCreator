@@ -33,7 +33,7 @@ test('Ollama planning disables thinking on first attempt and preserves schema en
     assert.equal(generic.data.ok, true);
     assert.equal(bodies[0].think, false);
     assert.equal(bodies[1].think, false);
-    assert.equal(Object.hasOwn(bodies[2], 'think'), false);
+    assert.equal(bodies[2].think, false);
     assert.deepEqual(bodies[0].format, input.schema);
     assert.equal(Object.hasOwn(bodies[1].options, 'think'), false);
     assert.ok(bodies.every(body => body.options.num_ctx >= 2048));

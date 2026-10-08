@@ -1,6 +1,7 @@
 import {assertAllowedBrief} from './contentPolicy.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
+import path from 'node:path';
 import { config } from './config.js';
 import { getGenerationMode, getProviderRuntime, getVisionRuntime } from './providerSettings.js';
 import { engineForGenerationMode, engineForJob, generationModeForJob, generationSourceForEngine } from './generationMode.js';
@@ -58,6 +59,21 @@ const targetedReviewSchema = { type: 'object', additionalProperties: false, requ
 } };
 
 function bounded(value, n = 1000) { return String(value || '').trim().slice(0, n); }
+export async function recoverSavedPlan(job) {
+  if (!job) return null;
+  if (job.plan?.components?.length) return job.plan;
+  if (job.rebuildPreviousPlan?.components?.length) return job.rebuildPreviousPlan;
+  const directory = path.join(config.dataRoot, 'runtime', 'traces', job.id, 'plans');
+  const prefix = `plan_v${job.planVersion}_`;
+  const names = await readdir(directory).catch(() => []);
+  for (const name of names.filter((entry) => entry.includes(prefix) && entry.endsWith('.json')).sort().reverse()) {
+    try {
+      const plan = JSON.parse(await readFile(path.join(directory, name), 'utf8'));
+      if (Array.isArray(plan.components) && plan.components.length) return plan;
+    } catch {}
+  }
+  return null;
+}
 function event(job, type, message, data = {}) {
   job.events ||= [];
   job.events.push({ id: randomUUID(), at: new Date().toISOString(), type, message, data });
@@ -212,6 +228,7 @@ async function buildPlan(job, referenceAnalysis) {
   let structuralIssues = [];
   let lastIncident = null;
   let lastPlannerError = null;
+  let truncatedPlan = false;
   await mutateJob(job.id, (item) => { item.status = 'planning'; event(item, 'plan.started', 'Création du plan 3D.'); return item; });
   const isGeneric = job.geometryStrategy === 'generic_primitives_v1';
   const categoryHint = inferCategory(job);
@@ -223,6 +240,7 @@ async function buildPlan(job, referenceAnalysis) {
         modelOverride: job.planningModel || '',
         // JSON planning is deterministic: do not burn long reasoning before answering.
         thinkOverride: (job.planningProvider || providerFor(job)) === 'local' ? config.ollamaPlanningThink : null,
+        numPredictOverride: truncatedPlan ? Math.max(config.ollamaPlanNumPredict, 3000) : null,
         messages: [
           { role: 'system', content: plannerSystem + (isGeneric ? '\\nMODE: INVOICE COMPONENTS ONLY, NO LOW-LEVEL PARTS. Use category from enum. Keep JSON below 1500 output tokens.\\nCATEGORY_TEMPLATE: '+categoryTemplate : '') },
           { role: 'user', content: plannerUser({ brief: job.brief, category: job.category, subtype: job.subtype, style: job.style, feedback: [...(job.memoryLessons || []).map((x) => ({ source: 'validated_memory', text: x.text })), ...(job.feedback || [])], previousIssues: structuralIssues }) + '\nREFERENCE_ANALYSIS=' + JSON.stringify(referenceAnalysis) + (lastPlannerError ? '\nPREVIOUS_ATTEMPT_ERROR=' + JSON.stringify(lastPlannerError) + '\nCorrect only the identified error and return one complete JSON document.' : '') },
@@ -247,7 +265,7 @@ async function buildPlan(job, referenceAnalysis) {
       }
       const version = (job.planVersion || 0) + 1;
       await mutateJob(job.id, (item) => {
-        item.plan = plan; item.planVersion = version;
+        item.plan = plan; item.planVersion = version; item.rebuildPreviousPlan = null;
         event(item, 'plan.ready', 'Plan 3D validé.', { version, repairs: plan.structureNormalization?.repairs?.length || 0, provider: response.meta.provider, model: response.meta.model });
         return item;
       });
@@ -256,6 +274,7 @@ async function buildPlan(job, referenceAnalysis) {
       return plan;
     } catch (cause) {
       if (Array.isArray(cause.details)) structuralIssues = cause.details;
+      truncatedPlan = cause.details?.doneReason === 'length' || cause.details?.done_reason === 'length';
       lastPlannerError = { code: cause.code || 'PLAN_FAILED',
         message: String(cause.message || '').slice(0, 260),
         issues: Array.isArray(cause.details) ? cause.details.slice(0, 8) : [] };
@@ -284,12 +303,14 @@ async function buildPlan(job, referenceAnalysis) {
 async function makeGenericGeometry(job, variant){
   const seed=seedFor([job.brief,job.category,variant.profile.id,PRIMITIVE_VERSION].join(':'));
   let lastError=null;
+  let truncatedGeometry=false;
   const source=variant.correctionOf ? job.variants.find(x=>x.id===variant.correctionOf) : null;
   const partial=Boolean(source?.geometryDefinition?.primitives&&source?.geometry?.parts?.length);
   for(let attempt=0;attempt<config.maxGeometryAttempts;attempt+=1){
     try{
       const response=await structuredChat({
         provider:providerFor(job),
+        numPredictOverride: truncatedGeometry ? Math.max(config.ollamaGeometryNumPredict, 2000) : null,
         messages:[
           {role:'system',content:genericGeometrySystem + (partial ? '\\nCORRECTION CIBLÉE : produis uniquement les composants modifiés. Les autres composants seront conservés bit pour bit.':'')},
           {role:'user',content:geometryUser({
@@ -330,6 +351,7 @@ async function makeGenericGeometry(job, variant){
       },generation:{provider:response.meta.provider,model:response.meta.model,fallback:false}};
     }catch(cause){
       lastError=cause;
+      truncatedGeometry = cause.details?.doneReason === 'length';
       await traceEvent(job.id,'GENERIC_PRIMITIVE_RETRY',{code:cause.code||'PRIMITIVE_ERROR',
         message:cause.message,details:cause.details||null},
         {variantId:variant.id,phase:'geometry',attempt:attempt+1});
@@ -775,6 +797,11 @@ async function runFull(job) {
 }
 
 async function runPatch(job, correction) {
+  if (!job.plan?.components?.length) {
+    const recovered = await recoverSavedPlan(job);
+    if (!recovered) throw Object.assign(new Error('Plan source indisponible pour le patch.'), { code:'CORRECTION_PLAN_MISSING' });
+    job = await mutateJob(job.id, (item) => { item.plan = recovered; event(item, 'plan.restored', 'Plan source restauré avant le patch.'); return item; });
+  }
   const source = job.variants.find((x) => x.id === correction.variantId) || job.variants.find((x) => x.id === job.selectedVariantId) || [...job.variants].sort((a,b)=>(b.review?.score||0)-(a.review?.score||0))[0];
   if (!source) throw Object.assign(new Error('Aucune variante source à corriger.'), { code: 'CORRECTION_SOURCE_MISSING' });
   const order = job.variants.length;
@@ -886,6 +913,7 @@ async function autoImprove(jobId) {
         item.autoRebuilds = (item.autoRebuilds || 0) + 1;
         item.rebuildSourceVariantId = best.id;
         item.feedback.push({ id:randomUUID(), at:new Date().toISOString(), source:'auto_review', mode:'rebuild', variantId:best.id, text:'Rebuild demandé par le contrôle qualité. ' + best.review.improvement + (problems ? ' Problèmes: ' + problems : '') });
+        item.rebuildPreviousPlan = item.plan;
         item.plan = null;
         item.status = 'planning';
         event(item, 'quality.auto_rebuild', 'Reconstruction automatique du plan 3D.', { sourceVariantId: best.id, score: best.review.score });
@@ -943,7 +971,7 @@ async function runContinuous(jobId) {
       if (correction.mode === 'patch') {
         await runPatch(job, correction);
       } else {
-        await mutateJob(jobId, (item) => { item.plan = null; item.pendingCorrection = null; item.status = 'queued'; item.activeBatchNumber = batch + 1; item.rebuildSourceVariantId = correction.variantId || null; item.rebuildCorrection = correction; event(item, 'correction.rebuild_started', 'Reconstruction du plan demandée.'); return item; });
+        await mutateJob(jobId, (item) => { item.rebuildPreviousPlan = item.plan; item.plan = null; item.pendingCorrection = null; item.status = 'queued'; item.activeBatchNumber = batch + 1; item.rebuildSourceVariantId = correction.variantId || null; item.rebuildCorrection = correction; event(item, 'correction.rebuild_started', 'Reconstruction du plan demandée.'); return item; });
         job = await getJob(jobId);
         await runFull(job);
         if ((await getJob(jobId)).status === 'awaiting_decomposition_review') return;
@@ -1001,7 +1029,7 @@ async function runJob(id) {
     if (job.pendingCorrection?.mode === 'patch') await runPatch(job, job.pendingCorrection);
     else {
       if (job.pendingCorrection?.mode === 'rebuild') {
-        await mutateJob(id, (item) => { item.plan=null; item.rebuildSourceVariantId=item.pendingCorrection?.variantId||null; item.rebuildCorrection=item.pendingCorrection; item.pendingCorrection=null; item.status='queued'; event(item,'correction.rebuild_started','Reconstruction du plan demandée.'); return item; });
+        await mutateJob(id, (item) => { item.rebuildPreviousPlan=item.plan; item.plan=null; item.rebuildSourceVariantId=item.pendingCorrection?.variantId||null; item.rebuildCorrection=item.pendingCorrection; item.pendingCorrection=null; item.status='queued'; event(item,'correction.rebuild_started','Reconstruction du plan demandée.'); return item; });
         job = await getJob(id);
       }
       await runFull(job);
@@ -1027,6 +1055,8 @@ async function runJob(id) {
     await traceEvent(id, 'JOB_REVIEW_READY', { bestVariantId: best?.id || null, bestScore: best?.review?.score ?? null }, { phase: 'job' });
   } catch (cause) {
     const failed = await getJob(id).catch(() => null);
+    if (failed && !failed.plan && failed.rebuildPreviousPlan?.components?.length)
+      await mutateJob(id, (item) => { item.plan = item.rebuildPreviousPlan; item.rebuildPreviousPlan = null; event(item, 'plan.restored', 'Ancien plan restauré après échec du rebuild.'); return item; }).catch(() => {});
     const attempted = [...(failed?.variants || [])].reverse().find((entry) =>
       (entry.correctionOf || entry.rebuildOf && entry.correctionRequest) && !['done','failed'].includes(entry.status));
     if (attempted) {
@@ -1058,13 +1088,17 @@ export async function requestCorrection(jobId, input = {}) {
   const mode = input.mode === 'rebuild' ? 'rebuild' : 'patch';
   const type = feedbackType({ issues, text });
   const feedbackId = randomUUID();
+  const savedPlan = await recoverSavedPlan(await getJob(jobId));
   const job = await mutateJob(jobId, (item) => {
     if (!['review_ready','failed','stopped'].includes(item.status) && !(item.continuousGeneration && item.status === 'generating'))
       throw Object.assign(new Error('Attends une variante terminée avant de corriger.'), { code:'JOB_NOT_REVIEWABLE' });
     if (item.pendingCorrection) throw Object.assign(new Error('Une correction est déjà en attente.'), { code:'CORRECTION_PENDING' });
     if (input.variantId && !item.variants.some((variant) => variant.id === input.variantId && variant.status === 'done'))
       throw Object.assign(new Error('Variante introuvable ou non terminée.'), { code:'VARIANT_NOT_READY' });
-    if (componentId && !item.plan?.components?.some((component) => component.id === componentId))
+    if (!item.plan?.components?.length && savedPlan) item.plan = savedPlan;
+    if (!item.plan?.components?.length)
+      throw Object.assign(new Error('Plan source indisponible. Relance un Rebuild après avoir restauré le plan du job.'), { code:'CORRECTION_PLAN_MISSING' });
+    if (componentId && !item.plan.components.some((component) => component.id === componentId))
       throw Object.assign(new Error('Composant inconnu.'), { code:'JOB_INPUT_INVALID' });
     item.feedback.push({ id:feedbackId, at:new Date().toISOString(), text, issues, componentId:componentId||null, feedbackType:type, mode, variantId:input.variantId||null });
     const sourceVariantId = input.variantId || item.bestVariantId || item.variants.find((variant) => variant.status === 'done')?.id || null;
