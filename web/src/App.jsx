@@ -136,7 +136,7 @@ function CreatePanel({settings,studio,onCreated}) {
     <div className="panel-head"><div><span className="eyebrow">NOUVEL ASSET</span><h2>Créer 3 variantes 3D</h2></div><span className="badge">Plan → Build → Capture → Review</span></div>
     <form onSubmit={submit}>
       <div className="form-grid">
-        <label>Nom de l'asset<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Cocotier tropical" /></label>
+        <label>Nom de l'asset (facultatif)<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Cocotier tropical" /></label>
         <label>Catégorie<select value={form.category} onChange={e=>setForm({...form,category:e.target.value})}><option>tree</option><option>bush</option><option>rock</option><option>building</option><option>furniture</option><option>prop</option><option>road</option><option>bridge</option></select></label>
         <label>Sous-type<input value={form.subtype} onChange={e=>setForm({...form,subtype:e.target.value})} placeholder="coconut_palm, cherry_blossom..." /></label>
         <label>Style<input value={form.style} onChange={e=>setForm({...form,style:e.target.value})} /></label>
@@ -152,13 +152,13 @@ function CreatePanel({settings,studio,onCreated}) {
         <label className="preview-toggle"><input type="checkbox" checked={form.previewDecomposition} onChange={e=>setForm({...form,previewDecomposition:e.target.checked})}/> Examiner la décomposition avant construction</label>
         <label>Variantes<select value={form.variantTarget} onChange={e=>setForm({...form,variantTarget:Number(e.target.value)})}>{[1,2,3,4,5,6].map(n=><option key={n}>{n}</option>)}</select></label>
       </div>
-      <label>Brief complet<textarea rows="5" value={form.brief} onChange={e=>setForm({...form,brief:e.target.value})} placeholder="Décris la silhouette, les proportions, les branches, feuilles, couleurs, détails indispensables..." /></label>
+      <label>Brief complet<textarea rows="5" value={form.brief} onChange={e=>setForm({...form,brief:e.target.value})} placeholder="Décris un objet en une phrase, ou ajoute une photo sans texte. Tu peux aussi détailler les proportions et les couleurs..." /></label>
       <div className="reference-row">
         <label className="upload" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();fileChange(e.dataTransfer.files)}}>Références visuelles — glisser/déposer ou cliquer<input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={e=>fileChange(e.target.files)} /></label>
         <div className="reference-previews">{images.map((src,i)=><img key={i} src={src} />)}</div>
       </div>
       {error&&<div className="error">{error}</div>}
-      <button className="primary launch" disabled={!form.name.trim()||!form.brief.trim()||!studio?.access?.studioId}>Lancer la création</button>
+      <button className="primary launch" disabled={(!form.name.trim()&&!form.brief.trim()&&images.length===0)||!studio?.access?.studioId}>Lancer la création</button>
     </form>
   </section>;
 }
