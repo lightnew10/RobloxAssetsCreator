@@ -14,7 +14,8 @@ import { getJob, listJobs, mutateJob, saveJob } from './store.js';
 import { markRecovered, recordIncident, traceIncident } from './recovery.js';
 import { sendCriticalAlert } from './telegram.js';
 import { traceArtifact, traceEvent } from './trace.js';
-import { learnFromSelection, relevantLessons } from './learning.js';
+import { learnFromSelection, relevantLessons, relevantExamples } from './learning.js';
+import { recordVariantMetric } from './metrics.js';
 import { qualityBatchDecision, rankQualityVariant } from './qualityPolicy.js';
 
 const queue = [];
@@ -78,6 +79,7 @@ export async function createAssetJob(input = {}) {
   const id = randomUUID();
   const target = Math.max(1, Math.min(config.maxVariants, Number(input.variantTarget) || 3));
   const memoryLessons = await relevantLessons({ name, category: input.category || 'prop', subtype: input.subtype || '' });
+  const memoryExamples = await relevantExamples({ name, brief, category: input.category || 'prop', subtype: input.subtype || '' });
   const job = {
     schemaVersion: 1, id, name, brief, category: bounded(input.category || 'prop', 80), subtype: bounded(input.subtype, 80),
     style: bounded(input.style || 'stylized Roblox', 300), studioId, provider, visionProvider, planningProvider, planningModel,
@@ -86,7 +88,7 @@ export async function createAssetJob(input = {}) {
     qualityPolicy: { initialVariants: target, autoAcceptScore: 8, essentialAcceptMinScore: 8, humanReviewMinScore: 5, essentialReviewMinScore: 5, maxPatchesPerCandidate: 2, maxRebuildsPerObject: 1, maxAttemptsPerObject: 9 },
     autoRebuilds: 0,
     referenceImages: Array.isArray(input.referenceImages) ? input.referenceImages.slice(0, 4) : [],
-    referenceAnalysis: null, plan: null, planVersion: 0, variants: [], feedback: [], memoryLessons, selectedVariantId: null,
+    referenceAnalysis: null, plan: null, planVersion: 0, variants: [], feedback: [], memoryLessons, memoryExamples, selectedVariantId: null,
     status: 'queued', error: null, stopRequested: false, pendingCorrection: null, recovery: null, events: [],
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
@@ -329,7 +331,7 @@ async function runVariant(jobId, variantId) {
   let job = await getJob(jobId);
   let variant = job.variants.find((x) => x.id === variantId);
   if (!variant || variant.status === 'done') return;
-  await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.status='generating'; event(item,'variant.generating',v.profile.label,{variantId}); return item; });
+  await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.startedAt ||= new Date().toISOString(); v.status='generating'; event(item,'variant.generating',v.profile.label,{variantId}); return item; });
   job = await getJob(jobId); variant = job.variants.find((x) => x.id === variantId);
 
   const selectedMode = generationModeForJob(job);
@@ -425,6 +427,10 @@ async function runVariant(jobId, variantId) {
     });
     return item;
   });
+  const finishedJob = await getJob(jobId);
+  const finishedVariant = finishedJob.variants.find(v=>v.id===variantId);
+  try { await recordVariantMetric(finishedJob,finishedVariant); }
+  catch(cause) { await traceEvent(jobId,'METRICS_WRITE_ERROR',{code:cause.code||null,message:cause.message},{phase:'metrics',variantId}); }
 }
 
 function createVariant(job, order, extra = {}) {
