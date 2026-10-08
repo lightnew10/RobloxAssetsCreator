@@ -4,8 +4,8 @@ import { getGenerationMode, getProviderRuntime, getVisionRuntime } from './provi
 import { engineForGenerationMode, engineForJob, generationModeForJob, generationSourceForEngine } from './generationMode.js';
 import { structuredChat, visionStructuredChat } from './providers.js';
 import { normalizeSpatialPlan, spatialPlanSchema } from './spatialPlan.js';
-import { fallbackGeometry, geometryAudit, geometrySchema, normalizeGeometry, seedFor, variationProfiles } from './geometry.js';
-import { buildProceduralGeometry, guessArchetype } from './archetypes/index.js';
+import { fallbackGeometry, geometryAudit, geometrySchema, legacyGeometrySchema, normalizeGeometry, seedFor, variationProfiles } from './geometry.js';
+import { buildProceduralGeometry, guessArchetype, proceduralGeometrySchema } from './archetypes/index.js';
 import { geometrySystem, geometryUser, plannerSystem, plannerUser, reviewSystem } from './prompts.js';
 import { auditVariant, buildNativeVariant, buildPartsVariant, saveVariantToLibrary } from './assetStudio.js';
 import { captureThreeViews } from './capture.js';
@@ -248,6 +248,7 @@ async function buildPlan(job, referenceAnalysis) {
 async function makeGeometry(job, variant) {
   let lastError = null;
   const seed = seedFor(job.id + ':' + variant.id);
+  const expectedArchetype = guessArchetype(job);
   for (let attempt = 0; attempt < config.maxGeometryAttempts; attempt += 1) {
     try {
       const response = await structuredChat({
@@ -256,14 +257,17 @@ async function makeGeometry(job, variant) {
           { role: 'system', content: geometrySystem },
           { role: 'user', content: geometryUser({
             plan: job.plan, profile: variant.profile,
-            examples: job.memoryExamples || [],
+            examples: (job.memoryExamples || []).filter(x=>x.archetype && x.params),
             feedback: [...(job.memoryLessons || []).map(x => ({ source:'validated_memory',text:x.text })), ...(job.feedback || [])],
             previousReview: variant.sourceReview || null,
           }) },
         ],
-        schema: geometrySchema,
+        schema: expectedArchetype ? proceduralGeometrySchema : legacyGeometrySchema,
         traceContext: { runId: job.id, variantId: variant.id, phase: 'geometry', attempt: attempt + 1, traceLevel: job.traceLevel },
       });
+      if (expectedArchetype && response.data.archetype !== expectedArchetype)
+        throw Object.assign(new Error('Archétype incohérent avec le type demandé : '+response.data.archetype+' au lieu de '+expectedArchetype),
+          {code:'ARCHETYPE_MISMATCH'});
       const procedural = response.data.archetype
         ? buildProceduralGeometry(response.data, job.plan, variant.profile, seed)
         : null;
