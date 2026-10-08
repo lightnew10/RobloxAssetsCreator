@@ -125,3 +125,12 @@ Rejouer le même cocotier avec **Auto**, puis vérifier `API ollama-native-diagn
 4. Sélectionner **Local + IA Roblox** puis créer un job. Attendu : `job.engine=auto`, génération native si disponible, repli Parts si nécessaire, avec source effective visible sur chaque variante.
 5. Vérifier que les scores locaux et natifs sont présentés séparément et qu'un changement des paramètres n'affecte pas le moteur d'un job créé auparavant.
 6. Revenir à **Sans IA Roblox** avant de comparer notre générateur local à la référence Roblox.
+
+## Test — Correction des sauvegardes JSON sous Windows
+
+- Mettre à jour le projet et vérifier le tag API `windows-save-recovery-v5`.
+- Créer un job, générer plusieurs variantes puis vérifier que les changements d'état et scores persistent après redémarrage.
+- En cas de verrouillage transitoire du JSON, le serveur relance le `rename` (codes `EPERM`, `EACCES`, `EBUSY`) en conservant l'ancienne version lisible jusqu'au succès.
+- Si le verrou persiste : `JOB_SAVE_BLOCKED` indique le chemin et le code Windows d'origine. Inspecter alors les autres serveurs Node, les synchroniseurs et antivirus. Ne pas supprimer le JSON existant.
+- Les fichiers temporaires du job sont nettoyés en cas d'erreur. Les tests automatiques simulent les conflits de renommage et exécutent désormais la suite sur Linux et Windows.
+- Ne pas renommer ni supprimer manuellement les jobs actifs et ne pas interrompre `start.bat` pour tenter de contourner un verrou transitoire.
