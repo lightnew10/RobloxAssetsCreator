@@ -209,7 +209,12 @@ export async function auditVariant(job, variant) {
 }
 
 export async function saveVariantToLibrary(job, variant) {
-  const payload = { folder: folderName(job), model: modelName(job, variant), category: clean(job.category || 'Autres', 40), type: clean(job.name, 55), assetName: clean(job.name, 45) + '_' + variant.id.slice(0, 8), variantId: variant.id };
+  const payload = { folder: folderName(job), model: modelName(job, variant), category: clean(job.plan?.category||job.category||'Autres', 40),
+    type: clean(job.name, 55), assetName: clean(job.name, 45) + '_' + variant.id.slice(0, 8),
+    variantId:variant.id, humanRating:Number.isFinite(variant.humanRating)?variant.humanRating:null,
+    engineUsed:variant.engineUsed||'unknown',schemaVersion:job.schemaVersion||1,
+    interpreterVersion:variant.geometryDefinition?.version||'legacy',
+    decomposition:variant.geometryDefinition?.primitives||null };
   const code = `local HttpService=game:GetService("HttpService")
 local data=HttpService:JSONDecode(${JSON.stringify(JSON.stringify(payload))})
 local sourceFolder=workspace:FindFirstChild(data.folder)
@@ -227,6 +232,14 @@ if existing then existing:Destroy() end
 local saved=source:Clone()
 saved.Name=data.assetName
 saved:SetAttribute("RACVariantId",data.variantId)
+saved:SetAttribute("RACEngineUsed",data.engineUsed)
+saved:SetAttribute("RACSchemaVersion",data.schemaVersion)
+saved:SetAttribute("RACInterpreterVersion",data.interpreterVersion)
+if data.humanRating~=nil then saved:SetAttribute("RACHumanRating",data.humanRating) end
+if data.decomposition then
+  local encoded=HttpService:JSONEncode(data.decomposition)
+  if #encoded<12000 then saved:SetAttribute("RACDecomposition",encoded) end
+end
 saved.Parent=kind
 return HttpService:JSONEncode({path=saved:GetFullName(),name=saved.Name})`;
   return parseStudioMcpResult(await executeStudioTool('execute_luau', { studio_id: job.studioId, datamodel_type: 'Edit', code }, { runId: job.id, variantId: variant.id, phase: 'save' }));
