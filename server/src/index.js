@@ -36,7 +36,7 @@ app.get('/api/health', async (_req,res) => {
     getStudioStatus().catch((e)=>({status:'disconnected',detail:e.message,studios:[],tools:[]})),
     providerHealth().catch(()=>({local:{ok:false}})),
   ]);
-  res.json({ ok:true, server:{host:config.host,port:config.port,traceLevel:config.traceLevel,buildTag:'model-root-repair-v2'}, studio, providers, queue:queueStatus() });
+  res.json({ ok:true, server:{host:config.host,port:config.port,traceLevel:config.traceLevel,buildTag:'ollama-native-diagnostics-v3'}, studio, providers, queue:queueStatus() });
 });
 
 app.get('/api/provider-settings', (_req,res)=>res.json({ok:true,settings:getProviderSettings()}));
