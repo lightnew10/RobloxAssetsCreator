@@ -6,6 +6,13 @@ where node >nul 2>nul || (
   pause
   exit /b 1
 )
+node scripts/check-ports.js
+if errorlevel 1 (
+  echo [ERREUR] Une ancienne instance utilise les ports de RobloxAssetsCreator.
+  echo Ferme les anciennes consoles du projet avant de relancer start.bat.
+  pause
+  exit /b 1
+)
 if not exist node_modules (
   echo [INFO] Installation des dependances...
   call npm install || exit /b 1

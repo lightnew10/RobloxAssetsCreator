@@ -50,3 +50,9 @@ Documentation Ollama :
 - Le job rapporté utilisait encore l'ancien timeout de 240 s et trois tentatives, avec l'ancien message d'erreur ; cela suggère fortement un serveur non redémarré après le correctif, sans le prouver à distance.
 - Vérifier `http://127.0.0.1:3001/api/health` : la réponse doit exposer `server.buildTag=spatial-root-repair-v1` après mise à jour. Fermer toutes les anciennes consoles/processus et relancer `start.bat`.
 - Le frontend Vite ne changera plus silencieusement de 5173 vers 5174 si le port est occupé ; ce conflit doit être corrigé plutôt que contourné.
+
+
+## Détection de serveur obsolète — start.bat
+- Le démarrage vérifie maintenant les ports 3001 (API) et 5173 (interface) avant d'ouvrir les consoles. Il s'arrête avec une erreur lisible si un port est déjà occupé ; il ne tue **aucun** processus.
+- L'interface affiche le champ `API ...` reçu de `/api/health`; la version `spatial-root-repair-v1` atteste que le correctif de relations est chargé, contrairement à une ancienne API.
+- Si le navigateur utilise le port 5174, fermer cette ancienne instance et rouvrir 5173. Une interface sur 5174 n'est pas le chemin de démarrage attendu.

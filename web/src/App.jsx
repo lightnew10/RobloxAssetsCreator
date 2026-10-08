@@ -204,7 +204,7 @@ export default function App(){
   useEffect(()=>{refreshSettings().catch(e=>setFatal(e.message));refresh();const timer=setInterval(refresh,2200);return()=>clearInterval(timer)},[]);
   if(!settings)return <div className="loading">Connexion au serveur...</div>;
   return <div className="app">
-    <header className="topbar"><div className="brand"><div className="logo">R</div><div><strong>Roblox Assets Creator</strong><span>3D pipeline standalone</span></div></div><div className="top-actions"><span className={'status '+(health?.providers?.local?.ok?'online':'offline')}>Ollama {health?.providers?.local?.ok?'online':'offline'}</span><button onClick={()=>setSettingsOpen(true)}>⚙ Paramètres IA</button></div></header>
+    <header className="topbar"><div className="brand"><div className="logo">R</div><div><strong>Roblox Assets Creator</strong><span>3D pipeline standalone</span></div></div><div className="top-actions"><span title="Version du serveur API sur le port 3001">API {health?.server?.buildTag||'ancienne version / inconnue'}</span><span className={'status '+(health?.providers?.local?.ok?'online':'offline')}>Ollama {health?.providers?.local?.ok?'online':'offline'}</span><button onClick={()=>setSettingsOpen(true)}>⚙ Paramètres IA</button></div></header>
     <main>
       {fatal&&<div className="error global">{fatal}</div>}
       <div className="dashboard-grid">

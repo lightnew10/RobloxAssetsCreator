@@ -113,3 +113,22 @@ test('rejects genuine parent cycles after normalization', () => {
   };
   assert.throws(()=>normalizeSpatialPlan(raw,null,[8,12,8]),/parent_cycle/i);
 });
+
+
+test('does not hide a missing real trunk shared by several details', () => {
+  const raw={
+    sizeStuds:[10,12,10],
+    components:[
+      {id:'leaf',name:'Feuille',shape:'leaf',material:'Grass',parentId:'root_trunk'},
+      {id:'fruit',name:'Fruit',shape:'ball',material:'Wood',parentId:'root_trunk'},
+    ],
+    essentialCriteria:['tronc','feuillage','fruits'],
+    captureViews:['front','side','top'],
+    nativeMethod:'generate_mesh',
+  };
+  assert.throws(()=>normalizeSpatialPlan(raw,null,[10,12,10]),cause=>{
+    assert.equal(cause.code,'ASSET_SPATIAL_STRUCTURE_INVALID');
+    assert.equal(cause.details.filter(x=>x.code==='missing_parent').length,2);
+    return true;
+  });
+});
