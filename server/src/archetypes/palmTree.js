@@ -1,8 +1,10 @@
 import {bezier,clamp,color,integer,mix,number,parameterSchema,part,profileParams,rng,rgb,segment,sizeOf} from './utils.js';
 export const id='palmTree';
+export const defaults={height:.85,curvature:.18,baseRadius:.065,frondCount:10,frondLength:.43,segments:6,frondWidth:.105,coconutSize:.95,coconutOffset:1.8,trunkColor:[112,79,51],leafColor:[59,147,74],coconutColor:[107,73,42],material:'Wood'};
 export const schema=parameterSchema({
   height:number(0.3,1.1),curvature:number(-0.65,0.65),baseRadius:number(0.025,0.22),
   frondCount:integer(4,20),frondLength:number(0.18,0.7),segments:integer(3,12),
+  frondWidth:number(.04,.25),coconutSize:number(.4,1.6),coconutOffset:number(1,3),
   trunkColor:rgb,leafColor:rgb,coconutColor:rgb,
   material:{type:'string',enum:['Wood','SmoothPlastic','Grass','LeafyGrass']}
 });
@@ -38,17 +40,18 @@ export function build(params={},context={}){
       const t0=j/leafSegments,t1=(j+1)/leafSegments;
       const a=bezier(origin,control,tip,t0),b=bezier(origin,control,tip,t1);
       const lengthPiece=Math.hypot(b[0]-a[0],b[1]-a[1],b[2]-a[2]);
-      const width=Math.max(.10,length*.105*Math.pow(Math.sin(Math.PI*(t0+t1)/2),.7));
+      const width=Math.max(.10,length*clamp(params.frondWidth,.04,.25,defaults.frondWidth)*Math.pow(Math.sin(Math.PI*(t0+t1)/2),.7));
       const piece=segment('frond_'+i+'_'+j,'foliage',a,b,width*.33,
         green.map((n,k)=>Math.round(clamp(n+(lower?-5:5)+(random()-.5)*12,0,255,n))), 'SmoothPlastic');
       if(piece){piece.shape='wedge';piece.size=[width,lengthPiece,Math.max(.09,width*.18)].map(n=>Math.max(.08,n));parts.push(piece);}
     }
   }
   for(let i=0;i<3;i++){
-    const a=i*Math.PI*2/3+.5,rr=radius*(1.8+.25*random());
-    parts.push(part('coconut_'+i,'fruit','ball',[radius*.95,radius*.95,radius*.95],
+    const a=i*Math.PI*2/3+.5,rr=radius*(clamp(params.coconutOffset,1,3,defaults.coconutOffset)+.25*random());
+    const coconutSize=radius*clamp(params.coconutSize,.4,1.6,defaults.coconutSize);
+    parts.push(part('coconut_'+i,'fruit','ball',[coconutSize,coconutSize,coconutSize],
       [top[0]+Math.cos(a)*rr,H-radius*(1.1+i*.15),top[2]+Math.sin(a)*rr],[0,0,0],coco,'SmoothPlastic'));
   }
   return {parts:parts.slice(0,180)};
 }
-export default {id,schema,build};
+export default {id,schema,defaults,build};

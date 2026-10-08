@@ -1,5 +1,6 @@
 import {clamp,color,integer,number,parameterSchema,part,profileParams,rgb,rng,sizeOf} from './utils.js';
 export const id='rock';
+export const defaults={height:.68,width:.8,lumps:7,roughness:.23,rockColor:[109,111,117],material:'Rock'};
 export const schema=parameterSchema({
   height:number(.25,1),width:number(.25,1),lumps:integer(3,15),roughness:number(0,.65),
   rockColor:rgb,material:{type:'string',enum:['Rock','Slate','SmoothPlastic','Concrete']}
@@ -21,4 +22,4 @@ export function build(params={},ctx={}){
   }
   return {parts};
 }
-export default {id,schema,build};
+export default {id,schema,defaults,build};

@@ -27,9 +27,10 @@ export function normalizeReview(review) {
 }
 
 // Trouve le paramètre qui porte un rôle donné pour un archétype, en lisant ses bornes dans le schéma.
-function paramForRole(archetypeId, role, schema) {
+function paramForRole(archetypeId, role, schema, component = '') {
   const declared = roles.archetypes[archetypeId] || {};
-  const key = Object.keys(declared).find((k) => declared[k] === role && schema.properties?.[k]);
+  const target = roles.componentTargets?.[archetypeId]?.[String(component).toLowerCase()]?.[role];
+  const key = target && schema.properties?.[target] ? target : Object.keys(declared).find((k) => declared[k] === role && schema.properties?.[k]);
   if (!key) return null;
   const spec = schema.properties[key];
   return { key, min: spec.minimum, max: spec.maximum, integer: spec.type === 'integer' };
@@ -44,7 +45,7 @@ export function planCorrections(defects, archetypeId, schema) {
     if (!rule) { missing.push({ issue: d.issue, reason: 'no_rule' }); continue; }
     if (rule.action === 'rebuild') { rebuilds.push(d); continue; }
     if (rule.action === 'instruct') { instructions.push({ issue: d.issue, component: d.component }); continue; }
-    const p = schema ? paramForRole(archetypeId, rule.role, schema) : null;
+    const p = schema ? paramForRole(archetypeId, rule.role, schema, d.component) : null;
     if (!p) { missing.push({ issue: d.issue, component: d.component, reason: 'needs_param_role', role: rule.role }); instructions.push({ issue: d.issue, component: d.component }); continue; }
     changes.push({ issue: d.issue, param: p.key, direction: rule.direction, step: rule.ratio * (p.max - p.min), integer: p.integer, min: p.min, max: p.max });
   }

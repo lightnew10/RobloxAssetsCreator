@@ -1,5 +1,6 @@
 import {clamp,color,number,parameterSchema,part,profileParams,rgb,sizeOf} from './utils.js';
 export const id='house';
+export const defaults={height:.7,width:.82,depth:.77,roofSlope:.52,wallColor:[196,171,133],roofColor:[126,67,53],material:'WoodPlanks'};
 export const schema=parameterSchema({
   height:number(.3,1),width:number(.35,1),depth:number(.35,1),roofSlope:number(.2,.9),
   wallColor:rgb,roofColor:rgb,material:{type:'string',enum:['WoodPlanks','Brick','Concrete','SmoothPlastic']}
@@ -24,4 +25,4 @@ export function build(params={},ctx={}){
     [sign*w*.28,wallHeight*.56,-d/2-thick*.13],[0,0,0],[89,147,170],'Glass');
   return {parts};
 }
-export default {id,schema,build};
+export default {id,schema,defaults,build};

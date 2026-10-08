@@ -2,6 +2,8 @@
 
 Avant les tests automatisés, lancer `npm install` à la racine, puis `npm test`.
 
+Pour les corrections : dans Studio, générer un palmier Parts puis demander « palmes trop fines » en ciblant les palmes. Vérifier le patch proposé sur `frondWidth`, les opérations appliquées, `changed` et les captures avant/après. Demander ensuite « il manque des feuilles » ; vérifier une modification de `frondCount` et la revue ciblée. Répéter sur un rocher et un objet inconnu. Une correction sans effet doit afficher « Aucun effet » et rester exclue de la sélection ; une correction `resolved` ne devient exemple qu'après clic sur « Valider cette correction ». Ce scénario n'est pas couvert par les tests hors Studio.
+
 Voir aussi [Diagnostics IA locale](LOCAL_AI_DIAGNOSTICS.md) pour les requêtes Ollama longues et le fournisseur de planification dédié.
 
 ## Test 1 — Pipeline Parts recommandé

@@ -1,5 +1,6 @@
 import {mkdir,appendFile,readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
+import { correctionEligibleForLearning, validatedCorrectionFeedback } from './change/validation.js';
 import {randomUUID} from 'node:crypto';
 import {config} from './config.js';
 import {resolveCategory} from './categories.js';
@@ -21,7 +22,7 @@ export async function readLibrary(source=libraryPath){
 }
 export function exampleFromSelection(job,variant,userRating){
   const score=typeof userRating==='number'?userRating:NaN;
-  if(!Number.isFinite(score)||score<8||score>10||!job?.id||!variant?.id)return null;
+  if(!Number.isFinite(score)||score<8||score>10||!job?.id||!variant?.id||!correctionEligibleForLearning(variant))return null;
   // Native results are not training examples without express platform authorization.
   if(variant.engineUsed==='native')return null;
   const definition=variant.geometryDefinition||null;
@@ -41,7 +42,7 @@ export function exampleFromSelection(job,variant,userRating){
     inventory:job.plan||null,decomposition:structured,
     schemaVersion:job.schemaVersion||1,interpreterVersion:definition?.version||'legacy_archetype',
     engineUsed:variant.engineUsed,aiReview:variant.review||null,
-    feedback:(job.feedback||[]).filter(x=>x?.source!=='auto_review').map(x=>({text:String(x.text||'').slice(0,1000),mode:x.mode||null})),
+    feedback:validatedCorrectionFeedback(job).map(x=>({text:String(x.text||'').slice(0,1000),mode:x.mode||null})),
     correctionOf:variant.correctionOf||null,
   };
 }

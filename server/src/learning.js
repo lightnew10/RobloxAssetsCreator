@@ -3,6 +3,7 @@ import { writeAtomicJson } from './atomicJson.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
+import { correctionEligibleForLearning, validatedCorrectionFeedback } from './change/validation.js';
 
 const file = path.join(config.dataRoot, 'runtime', 'learning.json');
 export const examplesPath = path.join(config.dataRoot, 'runtime', 'examples.jsonl');
@@ -31,7 +32,7 @@ let exampleQueue=Promise.resolve();
 export async function saveValidatedExample(job,variant,{destination=examplesPath}={}){
   // Human selection alone is not enough: never promote a low/unknown score.
   const score=variant?.humanRating;
-  if(!Number.isFinite(score)||score<8||score>10||!job?.id||!variant?.id||variant.engineUsed==='native')return null;
+  if(!Number.isFinite(score)||score<8||score>10||!job?.id||!variant?.id||variant.engineUsed==='native'||!correctionEligibleForLearning(variant))return null;
   const definition=variant.geometryDefinition || null;
   const example={
     id:randomUUID(),createdAt:new Date().toISOString(),sourceJobId:job.id,sourceVariantId:variant.id,
@@ -39,7 +40,7 @@ export async function saveValidatedExample(job,variant,{destination=examplesPath
     name:job.name,brief:job.brief,category:job.category,subtype:job.subtype,
     plan:job.plan,archetype:definition?.archetype||null,params:definition?.params||null,
     variation:definition?.variation||null,score,
-    critique:variant.review,feedback:(job.feedback||[]).filter(x=>x?.source!=='auto_review')
+    critique:variant.review,feedback:validatedCorrectionFeedback(job)
       .map(x=>({text:String(x.text||'').slice(0,1200),mode:x.mode||null})),
     engineUsed:variant.engineUsed||null,
   };
@@ -75,11 +76,11 @@ export async function relevantLessons({name,category,subtype},limit=12){
 }
 export async function learnFromSelection(job,variant){
   // An explicit HUMAN rating is mandatory for durable example and lesson promotion.
-  if(!Number.isFinite(variant?.humanRating) || variant.humanRating<8 || variant.humanRating>10) return [];
+  if(!Number.isFinite(variant?.humanRating) || variant.humanRating<8 || variant.humanRating>10 || !correctionEligibleForLearning(variant)) return [];
   const example=await saveValidatedExample(job,variant);
   const data=await read();data.lessons||=[];
   const texts=[
-    ...(job.feedback||[]).filter(x=>x?.source!=='auto_review').map(x=>x.text),
+    ...validatedCorrectionFeedback(job).map(x=>x.text),
     variant?.review?.improvement?'Critique finale : '+variant.review.improvement:'',
     ...(variant?.review?.criteria||[]).filter(c=>c.score>=8).map(c=>'Critère validé : '+c.name+' — '+c.comment),
   ].map(x=>String(x||'').trim()).filter(Boolean);

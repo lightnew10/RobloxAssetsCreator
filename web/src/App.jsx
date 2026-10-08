@@ -17,6 +17,14 @@ const api = async (url, options={}) => {
   return data;
 };
 const scoreClass = (score) => score >= 8 ? 'good' : score >= 5 ? 'mid' : 'bad';
+const defectLabels = {
+  too_round:'Trop rond',not_round_enough:'Pas assez rond',too_straight:'Trop droit',too_bent:'Trop courbé',wrong_proportion:'Mauvaises proportions',too_thin:'Trop fin',too_thick:'Trop épais',asymmetric_bad:'Asymétrie gênante',
+  too_few_details:'Trop peu de détails',too_many_details:'Trop de détails',visible_segment_seams:'Segments visibles',details_below_min_size:'Détails trop petits',
+  too_few_leaves:'Trop peu de feuilles',too_many_leaves:'Trop de feuilles',too_few_parts:'Trop peu de pièces',too_many_parts:'Trop de pièces',
+  texture_too_flat:'Texture trop plate',texture_too_noisy:'Texture trop chargée',colors_too_similar:'Couleurs trop proches',colors_too_saturated:'Couleurs trop saturées',
+  missing_component:'Composant manquant',misplaced_component:'Composant mal placé',floating_component:'Composant flottant',overlap_bad:'Chevauchement gênant',
+  unreadable_silhouette:'Silhouette peu lisible',variants_too_similar:'Variantes trop semblables',
+};
 const statusLabel = {
   queued:'En attente',understanding:'Analyse référence',planning:'Planification',generating:'Génération',
   review_ready:'À valider',awaiting_decomposition_review:'Inventaire à valider',saved:'Sauvegardé',failed:'Erreur',stopped:'Arrêté',interrupted:'Interrompu'
@@ -211,10 +219,12 @@ function VariantCard({job,variant,onRefresh}) {
 
 const dateLabel = (value) => value ? new Date(value).toLocaleString('fr-FR') : '—';
 
-function ReviewRow({job,variant,onRefresh}) {
+function ReviewRow({job,variant,onRefresh,defectOptions}) {
   const [rating,setRating]=useState(variant.humanRating == null ? '' : String(variant.humanRating));
   const [note,setNote]=useState('');
   const [feedback,setFeedback]=useState('');
+  const [issues,setIssues]=useState([]);
+  const [componentId,setComponentId]=useState('');
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
   useEffect(()=>setRating(variant.humanRating == null ? '' : String(variant.humanRating)),[variant.id,variant.humanRating]);
@@ -225,7 +235,8 @@ function ReviewRow({job,variant,onRefresh}) {
     finally { setBusy(false); }
   };
   const saveRating=()=>act(`/api/jobs/${job.id}/variants/${variant.id}/rating`,{rating:Number(rating),note});
-  const correct=(mode)=>act(`/api/jobs/${job.id}/correct`,{variantId:variant.id,text:feedback,mode});
+  const correct=(mode)=>act(`/api/jobs/${job.id}/correct`,{variantId:variant.id,issues,componentId:componentId||null,note:feedback,mode});
+  const validate=()=>act(`/api/jobs/${job.id}/corrections/${variant.correctionId||variant.id}/validate`,{approved:true,rating:variant.humanRating});
   const canSave=['review_ready','stopped','failed'].includes(job.status);
   const sourceVariant=(job.variants||[]).find(entry=>entry.id===variant.correctionOf);
   const previousComponents=sourceVariant?.geometryDefinition?.primitives?.components||[];
@@ -235,7 +246,7 @@ function ReviewRow({job,variant,onRefresh}) {
     return JSON.stringify(prior)!==JSON.stringify(component);
   }).map(component=>component.componentId) : [];
   const lineage=variant.correctionOf ? `Patch de ${variant.correctionOf.slice(0,8)}` : variant.rebuildOf ? `Rebuild de ${variant.rebuildOf.slice(0,8)}` : variant.convergenceOf ? `Nouvelle stratégie de ${variant.convergenceOf.slice(0,8)}` : 'Version initiale';
-  const change=variant.paramChange ? `${variant.paramChange.param} ${variant.paramChange.direction}` : variant.correctionOf ? 'Correction guidée' : variant.rebuildOf ? 'Nouveau plan' : '—';
+  const change=variant.patch?.ops?.length ? variant.patch.ops.map(op=>`${op.op} ${op.path}`).join(', ') : variant.paramChange ? `${variant.paramChange.param} ${variant.paramChange.direction}` : variant.correctionOf ? 'Correction guidée' : variant.rebuildOf ? 'Nouveau plan' : '—';
   const relatedFeedback=(job.feedback||[]).filter(entry=>entry.variantId===variant.id);
   return <>
     <tr className={job.bestVariantId===variant.id?'best-row':''}>
@@ -245,7 +256,7 @@ function ReviewRow({job,variant,onRefresh}) {
       <td>{variant.review ? `${Number(variant.review.score).toFixed(1)}/10` : '—'}<small>{variant.review?.decision||''}</small></td>
       <td><strong>{variant.humanRating==null?'—':`${variant.humanRating}/10`}</strong><small>{(variant.humanRatingHistory||[]).length} notation(s)</small></td>
       <td><div className="review-thumbs">{(variant.captures||[]).map((capture,index)=><a key={capture.fileName} href={`/api/jobs/${job.id}/captures/${capture.fileName}`} target="_blank" rel="noreferrer" title={`Vue ${index+1}`}><img src={`/api/jobs/${job.id}/captures/${capture.fileName}`} alt={`V${variant.order+1} vue ${index+1}`}/></a>)}</div></td>
-      <td>{change}<small>{variant.correctionDecision ? (variant.correctionDecision.keep?'Conservée':'Écartée') : ''}</small></td>
+      <td>{change}<small>{variant.correctionStatus ? ({resolved:'Résolu',unresolved:'Non résolu',no_effect:'Aucun effet',unsupported:'Non supporté'}[variant.correctionStatus]||variant.correctionStatus) : variant.correctionDecision ? (variant.correctionDecision.keep?'Conservée':'Écartée') : ''}</small></td>
       <td>{lineage}</td>
       <td><span>{job.selectedVariantId===variant.id?'Sauvegardée':''}</span></td>
     </tr>
@@ -253,6 +264,12 @@ function ReviewRow({job,variant,onRefresh}) {
       <div className="review-row-details">
         <div><strong>Proposition IA</strong><p>{variant.review?.improvement||'Aucune proposition disponible.'}</p><ul>{(variant.defects||variant.review?.problems||[]).map((defect,index)=><li key={index}>{defect.component} · {defect.issue} · {defect.severity}</li>)}</ul>
           <p>Modification appliquée : {change}. {variant.correctionDecision?.reason||''}</p>
+          {variant.correctionStatus&&<p><strong>{({resolved:'Résolu',unresolved:'Non résolu',no_effect:'Aucun effet',unsupported:'Non supporté'}[variant.correctionStatus])}</strong> · {variant.correctionReason}</p>}
+          {variant.correctionRequest&&<p>Retour : {variant.correctionRequest.text}</p>}
+          {(variant.appliedOps||[]).length>0&&<p>Opérations appliquées : {variant.appliedOps.map(op=>`${op.op} ${op.path} → ${JSON.stringify(op.value)}`).join(' ; ')}</p>}
+          {(variant.rejectedOps||[]).length>0&&<p>Opérations refusées : {variant.rejectedOps.map(op=>`${op.path} (${op.reason})`).join(' ; ')}</p>}
+          {(variant.changedFields||[]).length>0&&<p>Champs modifiés : {variant.changedFields.join(', ')}</p>}
+          {variant.targetedReview&&<p>Revue ciblée : {variant.targetedReview.evidence} {variant.targetedReview.remaining&&`· Reste : ${variant.targetedReview.remaining}`}</p>}
           {changedComponents.length>0&&<p>Composants modifiés : {changedComponents.join(', ')}</p>}
           <p>Audit : {variant.technicalAudit?.passed?'conforme':variant.technicalAudit?'échec':'indisponible'} · plan v{variant.planVersion} · {variant.geometryDefinition?.archetype||variant.geometryDefinition?.version||'géométrie native'}</p>
           {(variant.review?.criteria||[]).map((criterion,index)=><p key={index}>{criterion.name} : {criterion.score}/10 · {criterion.comment}</p>)}
@@ -260,9 +277,12 @@ function ReviewRow({job,variant,onRefresh}) {
         </div>
         <div><strong>Mes notes</strong><ul>{(variant.humanRatingHistory||[]).map(entry=><li key={entry.id}>{dateLabel(entry.at)} : {entry.rating}/10 {entry.note&&`· ${entry.note}`}</li>)}</ul>
           {variant.status==='done'&&<div className="review-edit"><label>Note /10<input type="number" min="0" max="10" step="0.1" disabled={job.selectedVariantId===variant.id&&job.status==='saved'} value={rating} onChange={e=>setRating(e.target.value)}/></label><label>Commentaire<input disabled={job.selectedVariantId===variant.id&&job.status==='saved'} value={note} maxLength={1000} onChange={e=>setNote(e.target.value)} placeholder="Ce qui fonctionne ou reste à corriger"/></label><button disabled={busy||rating===''||Number(rating)<0||Number(rating)>10||(job.selectedVariantId===variant.id&&job.status==='saved')} onClick={saveRating}>Enregistrer la note</button>
-          {canSave&&<button disabled={busy||variant.humanRating==null} onClick={()=>act(`/api/jobs/${job.id}/select`,{variantId:variant.id,userRating:variant.humanRating})}>Choisir et sauvegarder</button>}
+          {canSave&&<button disabled={busy||variant.humanRating==null||['no_effect','unsupported'].includes(variant.correctionStatus)} onClick={()=>act(`/api/jobs/${job.id}/select`,{variantId:variant.id,userRating:variant.humanRating})}>Choisir et sauvegarder</button>}
+          {variant.correctionStatus==='resolved'&&<button disabled={busy||variant.correctionValidated===true} onClick={validate}>{variant.correctionValidated?'Correction validée':'Valider cette correction'}</button>}
           {job.selectedVariantId===variant.id&&job.status==='saved'&&<small>Note figée lors de la sauvegarde pour préserver la bibliothèque validée.</small>}
-          <label>Correction demandée<input value={feedback} onChange={e=>setFeedback(e.target.value)} placeholder="Décris le changement"/></label><button disabled={busy||!feedback.trim()||Boolean(job.pendingCorrection)} onClick={()=>correct('patch')}>Patch</button><button disabled={busy||!feedback.trim()||Boolean(job.pendingCorrection)} onClick={()=>correct('rebuild')}>Rebuild</button></div>}
+          <fieldset className="correction-issues"><legend>Défauts à corriger</legend>{defectOptions.map(issue=><label key={issue}><input type="checkbox" checked={issues.includes(issue)} onChange={e=>setIssues(current=>e.target.checked?[...current,issue]:current.filter(value=>value!==issue))}/>{defectLabels[issue]||issue.replaceAll('_',' ')}</label>)}</fieldset>
+          <label>Composant<select value={componentId} onChange={e=>setComponentId(e.target.value)}><option value="">Asset entier</option>{(job.plan?.components||[]).map(component=><option key={component.id} value={component.id}>{component.name} ({component.id})</option>)}</select></label>
+          <label>Nuance facultative<input value={feedback} onChange={e=>setFeedback(e.target.value)} placeholder="Précise le changement"/></label><button disabled={busy||(!feedback.trim()&&!issues.length)||Boolean(job.pendingCorrection)||variant.planVersion!==job.planVersion} onClick={()=>correct('patch')}>Patch</button><button disabled={busy||(!feedback.trim()&&!issues.length)||Boolean(job.pendingCorrection)} onClick={()=>correct('rebuild')}>Rebuild</button>{variant.planVersion!==job.planVersion&&<small>Ancien plan : utilise Rebuild pour cette variante.</small>}</div>}
           {error&&<p className="error">{error}</p>}
         </div>
       </div>
@@ -273,11 +293,13 @@ function ReviewRow({job,variant,onRefresh}) {
 function ReviewTable({job,jobs,onRefresh}) {
   const [filter,setFilter]=useState('all');
   const [visibleCount,setVisibleCount]=useState(50);
+  const [defectOptions,setDefectOptions]=useState([]);
+  useEffect(()=>{api('/api/review/defects').then(data=>setDefectOptions(data.issues||[])).catch(()=>{})},[]);
   const entries=(jobs||[job]).flatMap(item=>(item.variants||[]).map(variant=>({job:item,variant})))
     .filter(({variant})=>filter==='unrated' ? variant.status==='done'&&variant.humanRating==null : filter==='rated' ? variant.humanRating!=null : true)
     .sort((a,b)=>String(b.variant.createdAt||'').localeCompare(String(a.variant.createdAt||'')));
   return <section className="review-table-section"><div className="panel-head"><div><h3>Revue des variantes</h3><p>{entries.length} variante(s) affichables · revue possible pendant les lots suivants</p></div><label>Afficher <select value={filter} onChange={e=>{setFilter(e.target.value);setVisibleCount(50)}}><option value="all">Toutes</option><option value="unrated">À noter</option><option value="rated">Déjà notées</option></select></label></div>
-    <div className="review-table-scroll"><table className="review-table"><thead><tr><th>Variante</th><th>Créée / terminée</th><th>Moteur</th><th>IA</th><th>Ma note</th><th>Captures</th><th>Modification</th><th>Origine</th><th>Choix</th></tr></thead><tbody>{entries.slice(0,visibleCount).map(({job:entryJob,variant})=><ReviewRow key={variant.id} job={entryJob} variant={variant} onRefresh={onRefresh}/>)}</tbody></table></div>
+    <div className="review-table-scroll"><table className="review-table"><thead><tr><th>Variante</th><th>Créée / terminée</th><th>Moteur</th><th>IA</th><th>Ma note</th><th>Captures</th><th>Modification</th><th>Origine</th><th>Choix</th></tr></thead><tbody>{entries.slice(0,visibleCount).map(({job:entryJob,variant})=><ReviewRow key={variant.id} job={entryJob} variant={variant} onRefresh={onRefresh} defectOptions={defectOptions}/>)}</tbody></table></div>
     {entries.length>visibleCount&&<button className="review-more" onClick={()=>setVisibleCount(count=>count+50)}>Afficher 50 variantes de plus</button>}
   </section>;
 }

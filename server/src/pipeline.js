@@ -1,5 +1,6 @@
 import {assertAllowedBrief} from './contentPolicy.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { config } from './config.js';
 import { getGenerationMode, getProviderRuntime, getVisionRuntime } from './providerSettings.js';
 import { engineForGenerationMode, engineForJob, generationModeForJob, generationSourceForEngine } from './generationMode.js';
@@ -10,9 +11,9 @@ import { normalizeSpatialPlan, spatialPlanSchema } from './spatialPlan.js';
 import { fallbackGeometry, geometryAudit, geometrySchema, legacyGeometrySchema, normalizeGeometry, seedFor, variationProfiles } from './geometry.js';
 import { archetypes, buildProceduralGeometry, guessArchetype, proceduralGeometrySchema } from './archetypes/index.js';
 import { ALLOWED_ISSUES, normalizeReview, planCorrections, applyOneChange, keepCorrection, shouldStop } from './review/defects.js';
-import { geometrySystem, genericGeometrySystem, geometryUser, plannerSystem, plannerUser, reviewSystem } from './prompts.js';
+import { geometrySystem, genericGeometrySystem, geometryUser, plannerSystem, plannerUser, reviewSystem, patchSystem, patchUser, targetedReviewSystem } from './prompts.js';
 import { auditVariant, buildNativeVariant, buildPartsVariant, saveVariantToLibrary } from './assetStudio.js';
-import { captureThreeViews } from './capture.js';
+import { captureThreeViews, capturePath } from './capture.js';
 import { getStudioStatus, listStudioTools } from './studioBridge.js';
 import { getJob, listJobs, mutateJob, saveJob } from './store.js';
 import { markRecovered, recordIncident, traceIncident } from './recovery.js';
@@ -24,6 +25,10 @@ import { recordVariantMetric } from './metrics.js';
 import { normalizeAssetInput } from './input.js';
 import { referenceSimilarity } from './referenceSimilarity.js';
 import { qualityBatchDecision, rankQualityVariant } from './qualityPolicy.js';
+import { compareVersions, definitionFingerprint, geometryFingerprint } from './change/fingerprint.js';
+import { applyPatch, definitionForVariant, ensurePrimitiveIds, patchSchema } from './change/patch.js';
+import { feedbackType } from './change/feedbackTypes.js';
+import { listCorrectionsForFeedbackType, recordCorrection, recordFeedback, recordGeneration, recordUnsupported, saveCapture } from './change/store.js';
 
 const queue = [];
 let running = false;
@@ -48,6 +53,9 @@ const referenceSchema = {
     colors:{type:'array',items:{type:'string'}}, mustPreserve:{type:'array',items:{type:'string'}},
   },
 };
+const targetedReviewSchema = { type: 'object', additionalProperties: false, required: ['resolved', 'evidence', 'remaining'], properties: {
+  resolved: { enum: [true, false, 'partial'] }, evidence: { type: 'string' }, remaining: { type: 'string' },
+} };
 
 function bounded(value, n = 1000) { return String(value || '').trim().slice(0, n); }
 function event(job, type, message, data = {}) {
@@ -305,7 +313,10 @@ async function makeGenericGeometry(job, variant){
       const audit=geometryAudit(geometry,job.plan);
       if(!audit.passed)throw Object.assign(new Error('Audit primitives : '+audit.issues.map(x=>x.code).join(', ')),
         {code:'GEOMETRY_AUDIT_FAILED',details:audit.issues});
-      const finalDefinition=partial ? {components:[...source.geometryDefinition.primitives.components.filter(x=>!changedIds.has(x.componentId)),...response.data.components]} : response.data;
+      const generatedComponents = ensurePrimitiveIds({ primitives: { components: response.data.components } }, { force: true }).primitives.components;
+      const finalDefinition = ensurePrimitiveIds({ primitives: { components: partial
+        ? [...source.geometryDefinition.primitives.components.filter(x=>!changedIds.has(x.componentId)), ...generatedComponents]
+        : generatedComponents } }).primitives;
       if(partial)await traceEvent(job.id,'TARGETED_PRIMITIVE_PATCH',{changedComponents:[...changedIds],retainedParts:source.geometry.parts.length-combined.length+built.parts.length},{variantId:variant.id,phase:'geometry'});
       await traceArtifact(job.id,'plans','primitive_decomposition_'+variant.id,{
         schemaVersion:2,interpreterVersion:PRIMITIVE_VERSION,decomposition:finalDefinition,warnings:built.warnings,
@@ -330,7 +341,59 @@ async function makeGenericGeometry(job, variant){
   return null;
 }
 
+async function preparePatch(job, variant) {
+  const source = job.variants.find((entry) => entry.id === variant.correctionOf);
+  if (!source) throw Object.assign(new Error('Variante source introuvable.'), { code: 'CORRECTION_SOURCE_MISSING' });
+  const definition = definitionForVariant(source);
+  if (!definition) {
+    const reason = 'Définition de géométrie indisponible pour cet objet.';
+    await recordUnsupported({ id: randomUUID(), at: new Date().toISOString(), jobId: job.id, sourceVariantId: source.id, feedback: variant.correctionRequest?.text || '', reason });
+    await traceEvent(job.id, 'correction.unsupported', { reason }, { variantId: variant.id, phase: 'correction' });
+    return { unsupported: reason, applied: [], rejected: [], feedback: variant.correctionRequest?.text || '', feedbackType: variant.correctionRequest?.feedbackType || 'unsupported', sourceVariantId: source.id, patch: null };
+  }
+  if (definitionFingerprint(source.geometryDefinition) !== definitionFingerprint(definition)) {
+    await mutateJob(job.id, (item) => { item.variants.find((entry) => entry.id === source.id).geometryDefinition = definition; return item; });
+  }
+  const feedback = variant.correctionRequest?.text || variant.sourceReview?.improvement || variant.paramChange?.issue || '';
+  const type = variant.correctionRequest?.feedbackType || feedbackType({ text: feedback });
+  const examples = await listCorrectionsForFeedbackType(type, { category: job.category, archetype: definition.archetype });
+  if (examples.length) await traceEvent(job.id, 'examples.retrieved', { ids: examples.map((entry) => entry.id), feedbackType: type }, { variantId: variant.id, phase: 'correction' });
+  let patch;
+  if (variant.paramChange && definition.params) {
+    const changed = applyOneChange(definition.params, variant.paramChange);
+    patch = { target: 'params', ops: [{ op: 'set', path: variant.paramChange.param, value: changed[variant.paramChange.param] }], reason: variant.paramChange.issue };
+  } else {
+    const response = await structuredChat({ provider: providerFor(job), messages: [
+      { role: 'system', content: patchSystem },
+      { role: 'user', content: patchUser({ definition, feedback, componentId: variant.correctionRequest?.componentId, examples }) },
+    ], schema: patchSchema, traceContext: { runId: job.id, variantId: variant.id, phase: 'correction', traceLevel: job.traceLevel } });
+    patch = response.data;
+  }
+  await traceEvent(job.id, 'patch.proposed', { patch, sourceVariantId: source.id }, { variantId: variant.id, phase: 'correction' });
+  const result = applyPatch(definition, patch);
+  for (const rejected of result.rejected) await traceEvent(job.id, 'patch.rejected', rejected, { variantId: variant.id, phase: 'correction' });
+  if (result.unsupported) {
+    await recordUnsupported({ id: randomUUID(), at: new Date().toISOString(), jobId: job.id, sourceVariantId: source.id, feedback, feedbackType: type, reason: result.unsupported });
+    await traceEvent(job.id, 'correction.unsupported', { reason: result.unsupported }, { variantId: variant.id, phase: 'correction' });
+  }
+  if (result.applied.length) await traceEvent(job.id, 'patch.applied', { operations: result.applied }, { variantId: variant.id, phase: 'correction' });
+  return { ...result, patch, feedback, feedbackType: type, examples: examples.map((entry) => entry.id), sourceVariantId: source.id };
+}
+
 async function makeGeometry(job, variant) {
+  if (variant.preparedPatch) {
+    const source = job.variants.find((entry) => entry.id === variant.correctionOf);
+    const definition = variant.preparedPatch.definition;
+    let raw;
+    const profile = { ...source.profile, id: definition.variation || source.geometryDefinition?.variation || source.profile.id };
+    if (definition.params) raw = buildProceduralGeometry(definition, job.plan, profile, variant.patchSeed);
+    else if (definition.primitives) raw = interpretPrimitives(definition.primitives, job.plan, { profile: profile.id, maxParts: job.maxParts || 180, minDetail: .2 });
+    else raw = { parts: definition.parts };
+    const geometry = normalizeGeometry(raw, job.plan);
+    const audit = geometryAudit(geometry, job.plan);
+    if (!audit.passed) throw Object.assign(new Error('Patch géométrique non conforme.'), { code: 'GEOMETRY_AUDIT_FAILED', details: audit.issues });
+    return { geometry, audit, definition, generation: { provider: 'targeted_patch', model: null, fallback: false } };
+  }
   if (variant.paramChange) {
     const source = job.variants.find((entry) => entry.id === variant.correctionOf);
     const definition = source?.geometryDefinition;
@@ -439,12 +502,101 @@ async function reviewVariant(job, variant) {
   }
 }
 
+async function recordGenerationVersion(job, variant) {
+  await recordGeneration({ id: variant.id, jobId: job.id, at: variant.finishedAt || new Date().toISOString(), brief: job.brief,
+    category: job.category, archetype: variant.geometryDefinition?.archetype || null,
+    mode: variant.geometryDefinition?.primitives ? 'primitives' : variant.geometryDefinition?.parts ? 'legacy_parts' : variant.engineUsed === 'native' ? 'native' : 'params',
+    definition: variant.geometryDefinition || null, definitionFingerprint: definitionFingerprint(variant.geometryDefinition),
+    geometryFingerprint: geometryFingerprint(variant.geometry), engine: variant.engineUsed, schemaVersion: job.schemaVersion,
+    status: variant.status, correctionStatus: variant.correctionStatus || null });
+}
+
+async function finishUnappliedPatch(job, variant, result) {
+  const status = result.unsupported ? 'unsupported' : 'no_effect';
+  const reason = result.unsupported || 'La correction n’a modifié aucun élément. Le retour n’a pas été appliqué.';
+  const finished = await mutateJob(job.id, (item) => {
+    const target = item.variants.find((entry) => entry.id === variant.id);
+    target.status = 'done'; target.finishedAt = new Date().toISOString(); target.correctionStatus = status;
+    target.correctionReason = reason; target.patch = result.patch; target.appliedOps = result.applied; target.rejectedOps = result.rejected;
+    target.correctionDecision = { keep: false, reason: status }; target.changedFields = [];
+    event(item, `correction.${status}`, reason, { variantId: variant.id, sourceVariantId: result.sourceVariantId });
+    return item;
+  });
+  await traceEvent(job.id, `correction.${status}`, { reason }, { variantId: variant.id, phase: 'correction' });
+  await recordCorrection({ kind: 'attempt', id: variant.correctionId || variant.id, at: new Date().toISOString(), jobId: job.id,
+    sourceVariantId: result.sourceVariantId, variantId: variant.id, feedbackType: result.feedbackType,
+    feedback: result.feedback, patch: result.patch, applied: result.applied, rejected: result.rejected,
+    changed: false, changedFields: [], status, reason, category: job.category });
+  await recordGenerationVersion(finished, finished.variants.find((entry) => entry.id === variant.id));
+}
+
+async function assessCorrection(job, variant, captures) {
+  const source = job.variants.find((entry) => entry.id === (variant.correctionOf || variant.rebuildOf));
+  const change = compareVersions(source, variant);
+  const beforeImages = [], afterImages = [];
+  for (const capture of source?.captures || []) {
+    const matching = captures.find((entry) => entry.view === capture.view);
+    if (!matching) continue;
+    const file = capturePath(job.id, capture.fileName);
+    if (!file) continue;
+    try {
+      const before = await readFile(file), after = Buffer.from(matching.data, 'base64');
+      beforeImages.push({ mimeType: capture.mimeType, data: before.toString('base64') });
+      afterImages.push({ mimeType: matching.mimeType, data: matching.data });
+    } catch {}
+  }
+  const captureChanged = beforeImages.length > 0 && beforeImages.some((image, index) =>
+    createHash('sha256').update(image.data).digest('hex') !== createHash('sha256').update(afterImages[index].data).digest('hex'));
+  const changed = source?.engineUsed === 'native' ? captureChanged : change.changed && captureChanged;
+  let targetedReview = null;
+  if (changed && beforeImages.length) {
+    try {
+      const response = await visionStructuredChat({ provider: visionProviderFor(job), messages: [
+        { role: 'system', content: targetedReviewSystem },
+        { role: 'user', content: JSON.stringify({ feedback: variant.correctionRequest?.text || variant.sourceReview?.improvement || variant.paramChange?.issue || '', component: variant.correctionRequest?.componentId || null, imageOrder: 'Vues avant, puis vues après, dans le même ordre.' }) },
+      ], images: [...beforeImages, ...afterImages], schema: targetedReviewSchema,
+      traceContext: { runId: job.id, variantId: variant.id, phase: 'targeted_review', traceLevel: job.traceLevel } });
+      targetedReview = response.data;
+      await traceEvent(job.id, 'review.targeted', targetedReview, { variantId: variant.id, phase: 'targeted_review' });
+    } catch (cause) {
+      targetedReview = { resolved: false, evidence: '', remaining: `Revue ciblée indisponible : ${cause.code || 'VISION_ERROR'}` };
+      await traceEvent(job.id, 'review.targeted', targetedReview, { variantId: variant.id, phase: 'targeted_review' });
+    }
+  }
+  const status = correctionOutcome(change, captureChanged, beforeImages.length > 0, targetedReview, source?.engineUsed === 'native');
+  const reason = status === 'no_effect' ? 'La définition, la géométrie ou les captures n’ont pas changé.'
+    : status === 'resolved' ? targetedReview.evidence : targetedReview?.remaining || 'Changement non confirmé par la revue ciblée.';
+  return { ...change, changed, captureChanged, targetedReview, status, reason };
+}
+
+export function correctionOutcome(change, captureChanged, capturesAvailable, targetedReview, native = false) {
+  const definitelyNoEffect = native ? capturesAvailable && !captureChanged
+    : !change.definitionChanged || !change.geometryChanged || capturesAvailable && !captureChanged;
+  if (definitelyNoEffect) return 'no_effect';
+  const changed = native ? captureChanged : change.changed && captureChanged;
+  return changed && targetedReview?.resolved === true ? 'resolved' : 'unresolved';
+}
+
 async function runVariant(jobId, variantId) {
   let job = await getJob(jobId);
   let variant = job.variants.find((x) => x.id === variantId);
   if (!variant || variant.status === 'done') return;
   await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.startedAt ||= new Date().toISOString(); v.status='generating'; event(item,'variant.generating',v.profile.label,{variantId}); return item; });
   job = await getJob(jobId); variant = job.variants.find((x) => x.id === variantId);
+
+  if (variant.correctionOf && (variant.correctionRequest?.mode === 'patch' || variant.paramChange)) {
+    const source = job.variants.find((entry) => entry.id === variant.correctionOf);
+    if (source?.engineUsed !== 'native' && !variant.preparedPatch) {
+      const prepared = await preparePatch(job, variant);
+      if (prepared.unsupported || !prepared.applied?.length) { await finishUnappliedPatch(job, variant, prepared); return; }
+      await mutateJob(jobId, (item) => {
+        const target = item.variants.find((entry) => entry.id === variantId);
+        target.preparedPatch = prepared; target.patchSeed = source.buildSeed || seedFor(job.id + ':' + source.id);
+        return item;
+      });
+      job = await getJob(jobId); variant = job.variants.find((x) => x.id === variantId);
+    }
+  }
 
   const selectedMode = generationModeForJob(job);
   let engine = engineForJob(job);
@@ -462,6 +614,10 @@ async function runVariant(jobId, variantId) {
     engine = wantNative && tools.includes(job.plan.nativeMethod) && tools.includes('wait_job_finished')
       ? 'native' : 'parts';
   }
+  if (variant.correctionOf && (variant.correctionRequest?.mode === 'patch' || variant.paramChange)) {
+    const source = job.variants.find((entry) => entry.id === variant.correctionOf);
+    engine = source?.engineUsed === 'native' ? 'native' : 'parts';
+  }
   if (engine === 'native' && (!tools.includes(job.plan.nativeMethod) || !tools.includes('wait_job_finished'))) {
     throw Object.assign(new Error('La génération native demandée nécessite ' + job.plan.nativeMethod + ' et wait_job_finished dans le serveur MCP Roblox.'), {
       code: 'NATIVE_TOOL_UNAVAILABLE', details: { nativeMethod: job.plan.nativeMethod, availableTools: tools },
@@ -470,7 +626,7 @@ async function runVariant(jobId, variantId) {
 
   if (engine === 'parts') {
     const generated = await makeGeometry(job, variant);
-    await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.geometry=generated.geometry; v.geometryAudit=generated.audit; v.generation=generated.generation; v.geometryDefinition=generated.definition; v.status='building'; return item; });
+    await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.geometry=generated.geometry; v.geometryAudit=generated.audit; v.generation=generated.generation; v.geometryDefinition=generated.definition; v.buildSeed ||= v.patchSeed || seedFor(job.id + ':' + variantId); v.status='building'; return item; });
     job = await getJob(jobId); variant = job.variants.find((x) => x.id === variantId);
     const bounds = await withRecovery(jobId, 'studio_build', variantId, () => buildPartsVariant(job, variant));
     await mutateJob(jobId, (item) => { const v=item.variants.find((x)=>x.id===variantId); v.bounds=bounds; v.engineUsed='parts'; v.generationSource='local_parts'; v.status='auditing'; event(item,'variant.built','Variante construite par Parts.',{variantId}); return item; });
@@ -537,10 +693,24 @@ async function runVariant(jobId, variantId) {
   job = await getJob(jobId); variant = job.variants.find((x) => x.id === variantId);
   variant.captures = (variant._captureData || captures);
   const review = await reviewVariant(job, variant);
+  const captureHashes = await Promise.all(captures.map(async (capture) => {
+    const result = await saveCapture(Buffer.from(capture.data, 'base64'), capture.mimeType === 'image/jpeg' ? 'jpg' : 'png');
+    return { view: capture.view, hash: result.hash };
+  }));
+  const correction = (variant.correctionOf || variant.rebuildOf && variant.correctionRequest) ? await assessCorrection(job, variant, captures) : null;
   await mutateJob(jobId, (item) => {
     const v=item.variants.find((x)=>x.id===variantId);
     delete v._captureData;
-    v.review=review; v.defects=review ? normalizeReview(review).defects : []; v.status='done'; v.finishedAt=new Date().toISOString();
+    v.review=review; v.defects=review ? normalizeReview(review).defects : []; v.status='done'; v.finishedAt=new Date().toISOString(); v.captureHashes = captureHashes;
+    if (correction) {
+      v.correctionStatus = correction.status; v.correctionReason = correction.reason;
+      v.changeReport = { changed: correction.changed, definitionChanged: correction.definitionChanged, geometryChanged: correction.geometryChanged, captureChanged: correction.captureChanged };
+      v.changedFields = correction.changedFields; v.targetedReview = correction.targetedReview;
+      v.patch = v.preparedPatch?.patch || null; v.appliedOps = v.preparedPatch?.applied || []; v.rejectedOps = v.preparedPatch?.rejected || [];
+      if (correction.status === 'no_effect') v.correctionDecision = { keep: false, reason: 'no_effect' };
+      delete v.preparedPatch;
+      event(item, `correction.${correction.status}`, correction.reason, { variantId, sourceVariantId: v.correctionOf || v.rebuildOf, changedFields: v.changedFields });
+    }
     event(item,'variant.done',review ? `Variante terminée · ${Number(review.score).toFixed(1)}/10` : 'Variante terminée · critique IA indisponible',{
       variantId, engineUsed: v.engineUsed, generationSource: v.generationSource || generationSourceForEngine(v.engineUsed),
     });
@@ -548,15 +718,27 @@ async function runVariant(jobId, variantId) {
   });
   const finishedJob = await getJob(jobId);
   const finishedVariant = finishedJob.variants.find(v=>v.id===variantId);
+  await recordGenerationVersion(finishedJob, finishedVariant);
+  if (correction) {
+    await recordCorrection({ kind: 'attempt', id: finishedVariant.correctionId || finishedVariant.id, at: new Date().toISOString(), jobId,
+      sourceVariantId: finishedVariant.correctionOf || finishedVariant.rebuildOf, variantId, feedbackType: finishedVariant.correctionRequest?.feedbackType || feedbackType({ text: finishedVariant.correctionRequest?.text || finishedVariant.sourceReview?.improvement || finishedVariant.paramChange?.issue }),
+      feedback: finishedVariant.correctionRequest?.text || finishedVariant.sourceReview?.improvement || null,
+      patch: finishedVariant.patch, applied: finishedVariant.appliedOps, rejected: finishedVariant.rejectedOps,
+      changed: correction.changed, changedFields: correction.changedFields, status: correction.status, reason: correction.reason,
+      targetedReview: correction.targetedReview, category: finishedJob.category, archetype: finishedVariant.geometryDefinition?.archetype || null });
+    await traceEvent(jobId, `correction.${correction.status}`, { reason: correction.reason, changedFields: correction.changedFields }, { variantId, phase: 'correction' });
+  }
   try { await recordVariantMetric(finishedJob,finishedVariant); }
   catch(cause) { await traceEvent(jobId,'METRICS_WRITE_ERROR',{code:cause.code||null,message:cause.message},{phase:'metrics',variantId}); }
 }
 
 function createVariant(job, order, extra = {}) {
   const profile = variationProfiles[order % variationProfiles.length];
+  const id = randomUUID();
   return {
-    id: randomUUID(), order, profile, planVersion: job.planVersion, batchNumber: job.activeBatchNumber || 1,
+    id, order, profile, planVersion: job.planVersion, batchNumber: job.activeBatchNumber || 1,
     rebuildOf: job.rebuildSourceVariantId || null, status: 'pending',
+    ...(job.rebuildCorrection ? { correctionRequest: job.rebuildCorrection, correctionId: id } : {}),
     geometry: null, bounds: null, technicalAudit: null, captures: [], review: null, engineUsed: null, generationSource: null,
     createdAt: new Date().toISOString(), ...extra,
   };
@@ -596,7 +778,8 @@ async function runPatch(job, correction) {
   const source = job.variants.find((x) => x.id === correction.variantId) || job.variants.find((x) => x.id === job.selectedVariantId) || [...job.variants].sort((a,b)=>(b.review?.score||0)-(a.review?.score||0))[0];
   if (!source) throw Object.assign(new Error('Aucune variante source à corriger.'), { code: 'CORRECTION_SOURCE_MISSING' });
   const order = job.variants.length;
-  const variant = createVariant(job, order, { correctionOf: source.id, profile: { id: 'correction', label: 'Correction', instruction: 'Applique précisément le feedback utilisateur et les problèmes de la critique sans dégrader les points déjà corrects.' }, sourceReview: source.review || null });
+  const variant = createVariant(job, order, { correctionOf: source.id, correctionId: correction.id, correctionRequest: correction,
+    profile: { id: 'correction', label: 'Correction', instruction: 'Applique précisément ce retour : ' + correction.text.slice(0, 500) + '. Conserve les éléments déjà corrects.' }, sourceReview: source.review || null });
   await mutateJob(job.id, (item) => { item.variants.push(variant); item.pendingCorrection=null; item.status='generating'; event(item,'correction.started',correction.text,{sourceVariantId:source.id,variantId:variant.id}); return item; });
   await runVariant(job.id, variant.id);
 }
@@ -661,7 +844,9 @@ async function autoImprove(jobId) {
       const after = await getJob(jobId);
       const result = after.variants.find((entry) => entry.id === variant.id);
       const nextReview = result.review ? normalizeReview(result.review) : { score: 0, defects: [] };
-      const keep = result.review ? keepCorrection(normalized, nextReview) : { keep: false, reason: 'review_unavailable' };
+      const keep = result.correctionStatus === 'no_effect' || result.correctionStatus === 'unsupported'
+        ? { keep: false, reason: result.correctionStatus }
+        : result.review ? keepCorrection(normalized, nextReview) : { keep: false, reason: 'review_unavailable' };
       const nextHistory = [...history, nextReview];
       const stop = shouldStop(nextHistory, { acceptScore: job.qualityPolicy?.autoAcceptScore ?? 8 });
       await mutateJob(jobId, (item) => {
@@ -758,7 +943,7 @@ async function runContinuous(jobId) {
       if (correction.mode === 'patch') {
         await runPatch(job, correction);
       } else {
-        await mutateJob(jobId, (item) => { item.plan = null; item.pendingCorrection = null; item.status = 'queued'; item.activeBatchNumber = batch + 1; item.rebuildSourceVariantId = correction.variantId || null; event(item, 'correction.rebuild_started', 'Reconstruction du plan demandée.'); return item; });
+        await mutateJob(jobId, (item) => { item.plan = null; item.pendingCorrection = null; item.status = 'queued'; item.activeBatchNumber = batch + 1; item.rebuildSourceVariantId = correction.variantId || null; item.rebuildCorrection = correction; event(item, 'correction.rebuild_started', 'Reconstruction du plan demandée.'); return item; });
         job = await getJob(jobId);
         await runFull(job);
         if ((await getJob(jobId)).status === 'awaiting_decomposition_review') return;
@@ -782,6 +967,7 @@ async function runContinuous(jobId) {
       if (item.stopRequested) return item;
       item.activeBatchNumber = nextBatch;
       item.status = 'generating';
+      item.rebuildCorrection = null; item.rebuildSourceVariantId = null;
       for (let index = 0; index < 3; index += 1) item.variants.push(createVariant(item, item.variants.length));
       event(item, 'batch.started', 'Nouveau lot de trois variantes.', { batchNumber: nextBatch });
       return item;
@@ -815,12 +1001,13 @@ async function runJob(id) {
     if (job.pendingCorrection?.mode === 'patch') await runPatch(job, job.pendingCorrection);
     else {
       if (job.pendingCorrection?.mode === 'rebuild') {
-        await mutateJob(id, (item) => { item.plan=null; item.rebuildSourceVariantId=item.pendingCorrection?.variantId||null; item.pendingCorrection=null; item.status='queued'; event(item,'correction.rebuild_started','Reconstruction du plan demandée.'); return item; });
+        await mutateJob(id, (item) => { item.plan=null; item.rebuildSourceVariantId=item.pendingCorrection?.variantId||null; item.rebuildCorrection=item.pendingCorrection; item.pendingCorrection=null; item.status='queued'; event(item,'correction.rebuild_started','Reconstruction du plan demandée.'); return item; });
         job = await getJob(id);
       }
       await runFull(job);
       const afterFull = await getJob(id);
       if(afterFull?.status==='awaiting_decomposition_review')return;
+      if (afterFull.rebuildCorrection) await mutateJob(id, (item) => { item.rebuildCorrection = null; item.rebuildSourceVariantId = null; return item; });
       await autoImprove(id);
     }
     job = await getJob(id);
@@ -839,6 +1026,22 @@ async function runJob(id) {
     });
     await traceEvent(id, 'JOB_REVIEW_READY', { bestVariantId: best?.id || null, bestScore: best?.review?.score ?? null }, { phase: 'job' });
   } catch (cause) {
+    const failed = await getJob(id).catch(() => null);
+    const attempted = [...(failed?.variants || [])].reverse().find((entry) =>
+      (entry.correctionOf || entry.rebuildOf && entry.correctionRequest) && !['done','failed'].includes(entry.status));
+    if (attempted) {
+      await mutateJob(id, (item) => {
+        const target = item.variants.find((entry) => entry.id === attempted.id);
+        target.status = 'failed'; target.correctionStatus = 'unresolved'; target.correctionReason = `Échec technique : ${cause.code || 'PIPELINE_FAILED'}`;
+        event(item, 'correction.unresolved', target.correctionReason, { variantId: target.id });
+        return item;
+      }).catch(() => {});
+      await recordCorrection({ kind:'attempt', id: attempted.correctionId || attempted.id, at:new Date().toISOString(), jobId:id,
+        sourceVariantId: attempted.correctionOf || attempted.rebuildOf, variantId:attempted.id,
+        feedbackType:attempted.correctionRequest?.feedbackType || null, feedback:attempted.correctionRequest?.text || null,
+        patch:attempted.preparedPatch?.patch || null, applied:attempted.preparedPatch?.applied || [], rejected:attempted.preparedPatch?.rejected || [],
+        changed:false, changedFields:[], status:'unresolved', reason:`Échec technique : ${cause.code || 'PIPELINE_FAILED'}` }).catch(() => {});
+    }
     await mutateJob(id, (item) => { item.status='failed'; item.error={code:cause.code||'PIPELINE_FAILED',message:cause.message,details:cause.details||null}; event(item,'job.failed',cause.message,{code:cause.code}); return item; }).catch(()=>{});
     await sendCriticalAlert(`RobloxAssetsCreator — erreur de génération\nJob : ${id}\nCode : ${safeTelegramErrorCode(cause.code || 'PIPELINE_FAILED')}\nConsulte la trace locale pour les détails.`);
     await traceArtifact(id, 'errors', 'pipeline_failure', { code:cause.code, message:cause.message, details:cause.details, stack:cause.stack }, { phase:'job' });
@@ -846,23 +1049,67 @@ async function runJob(id) {
 }
 
 export async function requestCorrection(jobId, input = {}) {
-  const text = bounded(input.text, 3000);
+  if (input.issues !== undefined && (!Array.isArray(input.issues) || input.issues.length > 8 || input.issues.some((issue) => !ALLOWED_ISSUES.has(issue))))
+    throw Object.assign(new Error('Liste de défauts invalide.'), { code:'JOB_INPUT_INVALID' });
+  const issues = Array.isArray(input.issues) ? [...new Set(input.issues)] : [];
+  const componentId = bounded(input.componentId, 80);
+  const text = bounded([issues.join(', '), bounded(input.note || input.text, 1000)].filter(Boolean).join(' · '), 3000);
   if (!text) throw Object.assign(new Error('Feedback requis.'), { code:'FEEDBACK_REQUIRED' });
   const mode = input.mode === 'rebuild' ? 'rebuild' : 'patch';
+  const type = feedbackType({ issues, text });
+  const feedbackId = randomUUID();
   const job = await mutateJob(jobId, (item) => {
     if (!['review_ready','failed','stopped'].includes(item.status) && !(item.continuousGeneration && item.status === 'generating'))
       throw Object.assign(new Error('Attends une variante terminée avant de corriger.'), { code:'JOB_NOT_REVIEWABLE' });
     if (item.pendingCorrection) throw Object.assign(new Error('Une correction est déjà en attente.'), { code:'CORRECTION_PENDING' });
     if (input.variantId && !item.variants.some((variant) => variant.id === input.variantId && variant.status === 'done'))
       throw Object.assign(new Error('Variante introuvable ou non terminée.'), { code:'VARIANT_NOT_READY' });
-    item.feedback.push({ id:randomUUID(), at:new Date().toISOString(), text, mode, variantId:input.variantId||null });
-    item.pendingCorrection={ mode, text, variantId:input.variantId||null };
+    if (componentId && !item.plan?.components?.some((component) => component.id === componentId))
+      throw Object.assign(new Error('Composant inconnu.'), { code:'JOB_INPUT_INVALID' });
+    item.feedback.push({ id:feedbackId, at:new Date().toISOString(), text, issues, componentId:componentId||null, feedbackType:type, mode, variantId:input.variantId||null });
+    const sourceVariantId = input.variantId || item.bestVariantId || item.variants.find((variant) => variant.status === 'done')?.id || null;
+    const source = item.variants.find((variant) => variant.id === sourceVariantId);
+    if (mode === 'patch' && source?.planVersion !== item.planVersion)
+      throw Object.assign(new Error('Cette variante utilise un ancien plan. Demande un Rebuild pour la corriger.'), { code:'JOB_INPUT_INVALID' });
+    item.pendingCorrection={ id:feedbackId, mode, text, issues, componentId:componentId||null, feedbackType:type, variantId:sourceVariantId };
     if (item.status !== 'generating') item.status='queued';
     item.error=null; item.stopRequested=false;
     event(item,'feedback.received',text,{mode,variantId:input.variantId||null});
     return item;
   });
+  try {
+    await recordFeedback({ id:feedbackId, at:new Date().toISOString(), jobId, variantId:input.variantId||null, text, issues, componentId:componentId||null, feedbackType:type, mode });
+  } catch (cause) {
+    await mutateJob(jobId, (item) => {
+      if (item.pendingCorrection?.id === feedbackId) item.pendingCorrection = null;
+      item.feedback = item.feedback.filter((entry) => entry.id !== feedbackId);
+      if (item.status === 'queued') item.status = 'review_ready';
+      event(item, 'feedback.storage_failed', 'Le retour n’a pas pu être journalisé.', { code:cause.code || 'FEEDBACK_STORAGE_FAILED' });
+      return item;
+    });
+    throw cause;
+  }
+  await traceEvent(jobId, 'feedback.received', { feedbackId, variantId: input.variantId||null, feedbackType:type, issues, componentId:componentId||null }, { phase:'correction', variantId:input.variantId||null }).catch(() => {});
   schedule(jobId);
+  return job;
+}
+
+export async function validateCorrection(jobId, correctionId, input = {}) {
+  const approved = input.approved === true;
+  const rating = input.rating == null || input.rating === '' ? null : Number(input.rating);
+  if (rating !== null && (!Number.isFinite(rating) || rating < 0 || rating > 10)) throw Object.assign(new Error('Note humaine invalide (0 à 10).'), { code:'HUMAN_RATING_INVALID' });
+  const job = await mutateJob(jobId, (item) => {
+    const variant = item.variants.find((entry) => (entry.correctionId || entry.id) === correctionId && entry.status === 'done');
+    if (!variant) throw Object.assign(new Error('Correction introuvable.'), { code:'CORRECTION_NOT_FOUND' });
+    if (approved && variant.correctionStatus !== 'resolved') throw Object.assign(new Error('Seule une correction résolue peut devenir un exemple.'), { code:'CORRECTION_NOT_RESOLVED' });
+    variant.correctionValidated = approved;
+    variant.correctionValidatedAt = new Date().toISOString();
+    if (rating !== null) variant.correctionRating = rating;
+    event(item, 'correction.validated', approved ? 'Correction validée par l’utilisateur.' : 'Correction non validée.', { correctionId, variantId: variant.id, approved, rating });
+    return item;
+  });
+  await recordCorrection({ kind:'validation', id:randomUUID(), correctionId, at:new Date().toISOString(), approved, rating });
+  await traceEvent(jobId, 'correction.validated', { correctionId, approved, rating }, { phase:'correction' });
   return job;
 }
 
@@ -912,7 +1159,7 @@ export async function approveDecomposition(jobId,input={}) {
 
 export async function selectAndSave(jobId, variantId, userRating = null) {
   let job = await getJob(jobId);
-  const variant = job?.variants.find((x) => x.id === variantId && x.status === 'done');
+  const variant = job?.variants.find((x) => x.id === variantId && x.status === 'done' && !['no_effect','unsupported'].includes(x.correctionStatus));
   if (!job || !variant) throw Object.assign(new Error('Variante introuvable ou non terminée.'), { code:'VARIANT_NOT_READY' });
   const rating = userRating===null||userRating===undefined?null:Number(userRating);
   if (rating!==null && (!Number.isFinite(rating)||rating<0||rating>10))

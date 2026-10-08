@@ -2,6 +2,7 @@
 
 IMPORTANT : ces fichiers sont des presets DOCUMENTAIRES, non chargés par le serveur actuellement.
 Les prompts actifs résident dans server/src/prompts.js et dans certains appels directs de server/src/pipeline.js.
+Les prompts de patch et de revue ciblée actifs sont `patchSystem`, `patchUser` et `targetedReviewSystem` dans `server/src/prompts.js` ; les presets de ce dossier restent documentaires.
 Leur branchement nécessite un loader, une sélection par étape/provider, une validation des schémas et des tests.
 
 ## Presets proposés et correspondances

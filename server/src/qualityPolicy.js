@@ -66,7 +66,7 @@ export function reviewEligibility(review, policy = {}) {
 }
 
 export function rankQualityVariant(variants = [], policy = {}) {
-  return [...variants].filter((item) => item?.review).sort((left, right) => {
+  return [...variants].filter((item) => item?.review && !['no_effect','unsupported'].includes(item.correctionStatus)).sort((left, right) => {
     const leftGate = reviewEligibility(left.review, policy);
     const rightGate = reviewEligibility(right.review, policy);
     return Number(rightGate.accepted) - Number(leftGate.accepted)

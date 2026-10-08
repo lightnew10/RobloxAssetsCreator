@@ -17,6 +17,9 @@ TEXT_MODEL : inventaire et paramètres. VISION_MODEL : photo. CRITIC_MODEL optio
 
 ## Revue et apprentissage
 
+### Corrections par patch
+Les corrections Parts repartent de la définition sauvegardée et appliquent des opérations validées par schéma, ciblant un paramètre ou une primitive à identifiant stable. La variante source reste intacte ; les anciennes définitions sont complétées lors de leur première correction. Empreintes de définition et de géométrie, captures avant/après et revue visuelle ciblée déterminent `resolved`, `unresolved` ou `no_effect`. Les meshes natifs reçoivent une nouvelle consigne et sont comparés par captures. Les tentatives, validations et demandes non supportées sont conservées dans des JSONL locaux ; seules les corrections résolues et validées par l'utilisateur servent d'exemples. Voir [CORRECTIONS.md](CORRECTIONS.md).
+
 ### Revue structurée
 La critique visuelle utilise le vocabulaire fermé de `server/src/review/defectRules.json`.
 `defects.js` normalise les défauts et rejette les termes inconnus.

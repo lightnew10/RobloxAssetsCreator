@@ -1,5 +1,6 @@
 import {bezier,clamp,color,integer,number,parameterSchema,part,profileParams,rgb,rng,segment,sizeOf} from './utils.js';
 export const id='broadleaf';
+export const defaults={height:.82,curvature:.12,baseRadius:.07,branchCount:6,crownWidth:.52,segments:5,trunkColor:[100,72,48],leafColor:[72,149,73],material:'Wood'};
 export const schema=parameterSchema({
   height:number(.3,1.1),curvature:number(-.55,.55),baseRadius:number(.025,.24),
   branchCount:integer(3,12),crownWidth:number(.2,.85),segments:integer(3,10),
@@ -37,4 +38,4 @@ export function build(params={},ctx={}){
   }
   return {parts:parts.filter(Boolean).slice(0,180)};
 }
-export default {id,schema,build};
+export default {id,schema,defaults,build};

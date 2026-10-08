@@ -2,13 +2,14 @@ import { segment, part, bezier } from './archetypes/utils.js';
 import Ajv from 'ajv';
 
 export const PRIMITIVE_TYPES=Object.freeze(['box','wedge','cylinder','ball','cone','sweep','revolve','extrude','group']);
-export const PRIMITIVE_VERSION='1.0.0';
+export const PRIMITIVE_VERSION='1.1.0';
 const vector=(min,max)=>({type:'array',minItems:3,maxItems:3,items:{type:'number',minimum:min,maximum:max}});
 const point2={type:'array',minItems:2,maxItems:2,items:{type:'number',minimum:-1,maximum:1}};
 const colorSchema={type:'array',minItems:3,maxItems:3,items:{type:'integer',minimum:0,maximum:255}};
 export const primitiveSpecSchema={
   type:'object',additionalProperties:false,required:['type','name'],properties:{
     type:{type:'string',enum:PRIMITIVE_TYPES},
+    id:{type:'string',maxLength:64},
     name:{type:'string',maxLength:64},
     position:vector(-1,1),size:vector(0,1),rotation:vector(-360,360),
     from:vector(-1,1),to:vector(-1,1),control:vector(-1,1),

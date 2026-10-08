@@ -1,0 +1,9 @@
+[
+  {"pattern":"trop (fin|fine|fines|fins)|too thin","type":"too_thin"},
+  {"pattern":"trop (epais|epaisse|larges|large)|too thick","type":"too_thick"},
+  {"pattern":"(pas assez|manque|trop peu) de (feuille|palme)|too few leaves","type":"too_few_leaves"},
+  {"pattern":"(trop de feuille|trop de palme)|too many leaves","type":"too_many_leaves"},
+  {"pattern":"(trop rond|too round)","type":"too_round"},
+  {"pattern":"(pas assez rond|not round enough)","type":"not_round_enough"},
+  {"pattern":"(composant manquant|il manque un|missing component)","type":"missing_component"}
+]

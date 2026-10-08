@@ -1,9 +1,18 @@
 {
-  "version": 1,
+  "version": 2,
   "archetypes": {
-    "palmTree": { "frondCount": "count", "segments": "detail", "curvature": "curvature", "baseRadius": "radius", "frondLength": "radius" },
+    "palmTree": { "frondCount": "count", "segments": "detail", "curvature": "curvature", "baseRadius": "radius", "frondLength": "radius", "frondWidth": "width", "coconutSize": "detail", "coconutOffset": "placement" },
     "broadleaf": { "branchCount": "count", "segments": "detail", "curvature": "curvature", "baseRadius": "radius", "crownWidth": "radius" },
     "rock": { "lumps": "detail", "roughness": "angularity" },
     "house": { "roofSlope": "curvature" }
+  },
+  "componentTargets": {
+    "palmTree": {
+      "fronds": { "radius": "frondWidth", "width": "frondWidth" },
+      "foliage": { "radius": "frondWidth", "width": "frondWidth" },
+      "palmes": { "radius": "frondWidth", "width": "frondWidth" },
+      "coconuts": { "detail": "coconutSize", "placement": "coconutOffset" },
+      "fruit": { "detail": "coconutSize", "placement": "coconutOffset" }
+    }
   }
 }

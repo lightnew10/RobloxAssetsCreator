@@ -22,7 +22,7 @@ export const geometrySystem = `Tu sélectionnes un archétype procédural Roblox
 Ne produis PAS une liste de centaines de Parts. Réponds avec un JSON très court :
 {"archetype":"palmTree|broadleaf|rock|house","params":{...},"variation":"balanced|silhouette|detail|compact|expressive|clean"}.
 Archétypes : palmTree (cocotier/palmier), broadleaf (arbre feuillu), rock (rocher), house (maison).
-Les champs de params sont ceux du schéma : height, curvature, baseRadius, frondCount, frondLength, segments, trunkColor, leafColor, coconutColor, material ; ou branchCount, crownWidth ; ou width, lumps, roughness, rockColor ; ou depth, roofSlope, wallColor, roofColor.
+Les champs de params sont ceux du schéma : height, curvature, baseRadius, frondCount, frondLength, frondWidth, coconutSize, coconutOffset, segments, trunkColor, leafColor, coconutColor, material ; ou branchCount, crownWidth ; ou width, lumps, roughness, rockColor ; ou depth, roofSlope, wallColor, roofColor.
 Couleurs RGB [R,G,B]. La hauteur, la largeur, les rayons et les longueurs sont des FRACTIONS de sizeStuds (0..1), pas des studs absolus.
 Préserve silhouette et critères essentiels. Les profils changent courbure, hauteur, longueur, nombre de segments/feuilles et pas seulement les couleurs.
 Si l'objet n'appartient à aucun archétype, tu peux renvoyer le format Parts historique. JSON uniquement.`;
@@ -55,6 +55,13 @@ Chaque problems[].issue doit être exactement un terme de cette liste fermée :
 ${issueVocabulary}
 Si aucun terme précis ne convient, utilise wrong_proportion ou unreadable_silhouette. N'invente pas d'issue.
 Réponds uniquement en JSON.`;
+
+export const patchSystem = `Tu corriges une définition d'asset Roblox déjà créée. Réponds UNIQUEMENT avec un patch JSON : {"target":"params|parts","ops":[{"op":"set|scale|add|remove","path":"...","value":...}],"reason":"..."}. Ne régénère jamais la définition complète. Pour params, path est un paramètre déclaré. Pour parts, path est componentId.primitiveId.champ ; une nouvelle primitive utilise componentId.$new et une suppression componentId.primitiveId. Ne change que ce que demande le retour. Si aucun paramètre ni primitive ne permet le changement, réponds {"target":null,"unsupported":"raison"}. Aucun code Lua ou JavaScript.`;
+export function patchUser({ definition, feedback, componentId, examples = [] }) {
+  return JSON.stringify({ currentDefinition: definition, exactFeedback: feedback, targetComponentId: componentId || null,
+    validatedCorrections: examples.slice(0, 3).map((entry) => ({ id: entry.id, feedbackType: entry.feedbackType, patch: entry.patch, result: entry.targetedReview })) });
+}
+export const targetedReviewSystem = `Compare les captures AVANT et APRÈS du même asset et réponds seulement à la question : le retour exact de l'utilisateur est-il visiblement résolu ? Réponds en JSON {"resolved":true|false|"partial","evidence":"observation concrète","remaining":"défaut restant ou vide"}. N'utilise pas la note globale. Si les images ne permettent pas de conclure, réponds false et indique pourquoi.`;
 
 export function plannerUser({ brief, category, subtype, style, feedback, previousIssues }) {
   return JSON.stringify({ brief, category, subtype, style, feedback: feedback || [], previousStructuralIssues: previousIssues || [] });

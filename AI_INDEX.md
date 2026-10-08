@@ -9,6 +9,7 @@ Créer et améliorer des assets 3D Roblox indépendamment de MyRGame ; trois var
 - Règles agent : [AGENTS.md](AGENTS.md)
 - Architecture constatée : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Tests manuels : [docs/TESTING.md](docs/TESTING.md)
+- Corrections par patch : [docs/CORRECTIONS.md](docs/CORRECTIONS.md)
 - Refonte progressive PROPOSÉE : [docs/ASSET_PIPELINE_V2.md](docs/ASSET_PIPELINE_V2.md)
 - ComfyUI / textures PROPOSÉS : [docs/COMFYUI_INTEGRATION.md](docs/COMFYUI_INTEGRATION.md)
 - Catalogue des presets NON branchés : [prompts/README.md](prompts/README.md)
@@ -23,6 +24,7 @@ Créer et améliorer des assets 3D Roblox indépendamment de MyRGame ; trois var
 - server/src/capture.js : captures pour la critique.
 - server/src/qualityPolicy.js : acceptation et relances.
 - server/src/review/ : vocabulaire fermé, rôles paramétriques et décisions de correction.
+- server/src/change/ : empreintes, patchs bornés, historique append-only et exemples de corrections validées.
 - Revue web : tableau des variantes, notes humaines révisables et historique ; lots de trois en série avec arrêt automatique après un nombre choisi de lots, ou jusqu'à arrêt humain.
 - server/src/trace.js : traces détaillées.
 - server/src/telegram.js : notifications optionnelles au démarrage, sur erreur et toutes les heures ; configuration dans `server/.env` décrite dans README.md.
