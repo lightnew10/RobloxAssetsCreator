@@ -2,6 +2,7 @@ import {mkdir,appendFile,readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {config} from './config.js';
+import {resolveCategory} from './categories.js';
 export const LIBRARY_VERSION=2;
 export const libraryPath=path.join(config.dataRoot,'runtime','library.jsonl');
 export const libraryArchivePath=path.join(config.dataRoot,'runtime','library-archive.jsonl');
@@ -86,12 +87,13 @@ export async function saveLibrarySelection(job,variant,userRating,{destination=l
 }
 export async function searchLibrary({name='',brief='',category='',subtype=''},limit=3,{source=libraryPath}={}){
   const all=await readLibrary(source),query=keywords([name,brief,subtype].join(' '));
+  const desiredCategory=resolveCategory(null,{name,brief,category,subtype});
   const ranked=all.map(entry=>{
     const words=keywords([entry.name,entry.brief,entry.subtype].join(' '));
     const matched=[...query].filter(word=>words.has(word)).length;
     const union=new Set([...query,...words]).size;
     return {entry,similarity:matched/Math.max(1,union),
-      rank:(norm(category)===norm(entry.category)?100:0)+(norm(subtype)===norm(entry.subtype)&&subtype?12:0)+
+      rank:(norm(desiredCategory)===norm(entry.category)?100:0)+(norm(subtype)===norm(entry.subtype)&&subtype?12:0)+
         10*matched/Math.max(1,union)};
   }).sort((a,b)=>b.rank-a.rank||String(b.entry.createdAt).localeCompare(String(a.entry.createdAt)));
   return ranked.slice(0,Math.max(0,Math.min(3,limit))).map(x=>x.entry);
