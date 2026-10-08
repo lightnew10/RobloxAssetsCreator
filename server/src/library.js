@@ -25,8 +25,8 @@ export function exampleFromSelection(job,variant,userRating){
   if(variant.engineUsed==='native')return null;
   const definition=variant.geometryDefinition||null;
   const decomposition=definition?.primitives||null;
-  const structured=decomposition||definition?.archetype && definition?.params ?
-    {archetype:definition.archetype,params:definition.params,variation:definition.variation}:null;
+  const structured=decomposition || (definition?.archetype && definition?.params ?
+    {archetype:definition.archetype,params:definition.params,variation:definition.variation}:null);
   if(!structured)return null;
   return {
     version:LIBRARY_VERSION,id:randomUUID(),createdAt:new Date().toISOString(),
@@ -73,7 +73,6 @@ export async function saveLibrarySelection(job,variant,userRating,{destination=l
       const keep=rank.slice(0,max),archived=rank.slice(max);
       await appendFile(archive,archived.map(x=>JSON.stringify(x)).join('\n')+'\n');
       // Replace with a temp then retry atomic rename on Windows.
-      const {writeAtomicJson}=await import('./atomicJson.js');
       // JSONL is not JSON; write temp explicitly and preserve the last valid file if renaming fails.
       const {rename}=await import('node:fs/promises');
       const tmp=destination+'.'+randomUUID()+'.tmp';
